@@ -1,0 +1,67 @@
+{
+  "milestone": "face-splitting",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cargo test -p truck-bop",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cargo check -p truck-bop",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "failedFeatures": [
+      "section-projection"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "section-projection",
+      "severity": "blocking",
+      "description": "`orient_parameter_loop()` still normalizes open section polylines with a signed-area comparison against the face boundary. That heuristic is only meaningful for closed loops; for plane-plane sections the sign depends on arbitrary sample ordering, so projected UV polylines can still be reversed inconsistently between faces. The fix commit adds `orient_open_section_pair()`, but it leaves this area-based normalization in place and even marks `section_projection_respects_inverted_face_orientation` ignored as a known limitation, so the original requirement that projection respects face orientation is still unmet."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Align `rust-bop-worker` validator guidance with the mission config by replacing mandatory `cargo clippy -p truck-bop` with the repo-approved lint command from `.factory/services.yaml`, or explicitly document when clippy is intentionally skipped.",
+      "evidence": "The `split-face-records` re-review still found `.factory/skills/rust-bop-worker/SKILL.md` requiring clippy while `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` and `/Volumes/DPC/work/cad/truck-new/.factory/services.yaml` document that lint is intentionally skipped due to known failures outside `truck-bop`.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify `rust-bop-worker` test-running guidance so workers do not treat mission feature IDs as exact Rust test names; recommend grep/discovery or pattern-based runs before using `-- --exact`.",
+      "evidence": "Both the original `trimming-loops` review and the `fix-section-projection-storage` handoff show `cargo test -p truck-bop <feature-or-module-name> -- --exact` can succeed with zero matched tests, weakening verification.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Document the trimming-loop reversal invariant in `.factory/library/truck-bop.md`.",
+      "reason": "Accurate but not yet clearly systemic; the rule is now encoded in code and tests, but we do not yet have repeated evidence that workers broadly miss it."
+    },
+    {
+      "observation": "Document split-face fragment ownership and hole containment invariants in `.factory/library/architecture.md`.",
+      "reason": "Now accurate after the fixes, but still better treated as orchestrator-owned guidance so it can be integrated with the broader face-splitting design notes deliberately."
+    },
+    {
+      "observation": "Add a convention update for FF open-curve orientation to shared docs right now.",
+      "reason": "Rejected because the implementation still has a known blocking limitation here; documenting it as settled guidance would overstate current behavior."
+    }
+  ],
+  "previousRound": "/Volumes/DPC/work/cad/truck-new/.factory/validation/face-splitting/scrutiny/synthesis.json"
+}

@@ -1,0 +1,26 @@
+{
+  "featureId": "trimming-loops",
+  "reviewedAt": "2026-03-15T18:43:46Z",
+  "commitId": "3b6ab1901836aef05226469b771dc2f607a1c6e8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the original trimming-loop implementation and the follow-up reversal fix. The fix updates closed-loop reversal to reverse edge order and per-edge direction together, then re-closes the UV polyline, which directly addresses the prior malformed-loop failure in `classify_loops`.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still recommends `cargo test -p truck-bop <test_name> -- --exact` in the RED step without warning that mission feature IDs often do not match Rust test names, which led the original worker to a misleading 0-test success run.",
+      "evidence": "Original handoff records `cargo test -p truck-bop trimming_loops -- --exact` returning 0 tests; `.factory/skills/rust-bop-worker/SKILL.md` still presents the exact-name command without that caveat."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The shared library documents other face-splitting invariants, but it still does not capture the trimming-loop reversal rule that closed loops must reverse edge order and per-edge UV direction together, then be re-closed so `first == last` remains true.",
+      "evidence": "`.factory/library/architecture.md` notes face splitting only at a high level, and `.factory/library/truck-bop.md` has no trimming-loop note, while `truck-bop/src/trim.rs:179` and `truck-bop/src/trim.rs:201` now encode this specific invariant."
+    }
+  ],
+  "addressesFailureFrom": "/Volumes/DPC/work/cad/truck-new/.factory/validation/face-splitting/scrutiny/reviews/trimming-loops.json",
+  "summary": "Re-reviewed `trimming-loops` together with fix feature `fix-trimming-loop-reversal`. I checked the prior failed review, both handoffs, the fix transcript skeleton, and both diffs (`1c6c5c8e2986c02b3908f77d5b41c7d386cadc86` and `3b6ab1901836aef05226469b771dc2f607a1c6e8`). The fix adequately resolves the original blocking issue: closed-loop reversal now preserves closure and edge connectivity, and no remaining blocking issues were identified in scope."
+}

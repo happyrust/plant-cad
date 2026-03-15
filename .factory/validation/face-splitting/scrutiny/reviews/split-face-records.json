@@ -1,0 +1,26 @@
+{
+  "featureId": "split-face-records",
+  "reviewedAt": "2026-03-15T18:43:43.007244+00:00",
+  "commitId": "920c3dae7b8e4bd953d98d6b58af8adfaee3f5a2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the original implementation plus the two fix commits. The fixes now emit one `SplitFace` per outer trimming loop and assign inner loops only to the smallest containing outer fragment, which addresses the original blocking provenance bugs.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still requires a clean `cargo clippy -p truck-bop` run even though the mission guidance and services file explicitly document that clippy is intentionally skipped because of known pre-existing failures outside `truck-bop`.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` step 4 says to run and address `cargo clippy -p truck-bop`; `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` says clippy may fail due to pre-existing issues, and `/Volumes/DPC/work/cad/truck-new/.factory/services.yaml` sets `lint` to `echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"`."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The project library still describes face splitting only at a high level and does not capture the fragment-ownership invariant that each outer loop becomes its own `SplitFace` and inner loops are assigned by UV containment to the smallest containing outer region.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/library/architecture.md` only says `Face Splitting: UV projection, trimming loops`, while the fixed logic in `truck-bop/src/trim.rs:35` and `truck-bop/src/trim.rs:268` now depends on per-outer partitioning plus containment-based hole ownership."
+    }
+  ],
+  "addressesFailureFrom": "/Volumes/DPC/work/cad/truck-new/.factory/validation/face-splitting/scrutiny/reviews/split-face-records.json",
+  "summary": "Re-reviewed `split-face-records` against the original failing implementation and the two fix features. The combined fixes in `bb2bb642` and `920c3dae` resolve the prior blocking issues: fragments are partitioned per outer loop, holes are assigned by containment, and the updated regression tests cover both multiple outer regions and nested containment ownership."
+}
