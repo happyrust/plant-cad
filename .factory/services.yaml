@@ -1,0 +1,7 @@
+commands:
+  test: cargo test -p truck-bop
+  clippy: cargo clippy -p truck-bop
+  check: cargo check -p truck-bop
+  build: cargo build -p truck-bop
+
+services: {}
