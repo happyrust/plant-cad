@@ -14,7 +14,7 @@ pub use ids::{
 };
 
 use rustc_hash::FxHashMap;
-use crate::{BopOptions, BopError};
+use crate::BopOptions;
 use shape_info::{ShapeInfo, ShapeKind};
 
 /// Data structure
