@@ -72,7 +72,13 @@ where
     C: Clone,
 {
     let uv = Point2::new(parameters.0, parameters.1);
-    face.boundaries().into_iter().all(|wire| point_on_or_inside_wire(&wire, uv, tolerance))
+    let mut boundaries = face.boundaries().into_iter();
+    let Some(outer) = boundaries.next() else {
+        return false;
+    };
+
+    point_on_or_inside_wire(&outer, uv, tolerance)
+        && boundaries.all(|hole| !point_strictly_inside_wire(&hole, uv, tolerance))
 }
 
 fn point_on_or_inside_wire<C>(wire: &truck_topology::Wire<Point3, C>, point: Point2, tolerance: f64) -> bool
@@ -81,6 +87,14 @@ where
 {
     let polygon: Vec<Point2> = wire.vertex_iter().map(|vertex| Point2::new(vertex.point().x, vertex.point().y)).collect();
     point_in_polygon(&polygon, point, tolerance)
+}
+
+fn point_strictly_inside_wire<C>(wire: &truck_topology::Wire<Point3, C>, point: Point2, tolerance: f64) -> bool
+where
+    C: Clone,
+{
+    let polygon: Vec<Point2> = wire.vertex_iter().map(|vertex| Point2::new(vertex.point().x, vertex.point().y)).collect();
+    point_strictly_in_polygon(&polygon, point, tolerance)
 }
 
 fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
@@ -108,6 +122,15 @@ fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
     }
 
     inside
+}
+
+fn point_strictly_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
+    point_in_polygon(polygon, point, tolerance) && !point_on_polygon_boundary(polygon, point, tolerance)
+}
+
+fn point_on_polygon_boundary(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
+    polygon.windows(2).any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
+        || point_on_segment(point, *polygon.last().unwrap(), polygon[0], tolerance)
 }
 
 fn point_on_segment(point: Point2, start: Point2, end: Point2, tolerance: f64) -> bool {
@@ -237,6 +260,38 @@ mod tests {
         assert_eq!(bopds.vf_interferences().len(), 1);
     }
 
+    #[test]
+    fn vf_hole_rejects_vertex_inside_inner_void() {
+        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let vertex = Vertex::new(Point3::new(0.5, 0.5, 0.0));
+
+        let count = intersect_vf(
+            &mut bopds,
+            &[(VertexId(0), vertex)],
+            &[(FaceId(10), square_face_with_square_hole())],
+            &[(VertexId(0), FaceId(10))],
+        );
+
+        assert_eq!(count, 0);
+        assert!(bopds.vf_interferences().is_empty());
+    }
+
+    #[test]
+    fn vf_hole_accepts_vertex_between_outer_loop_and_hole() {
+        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let vertex = Vertex::new(Point3::new(0.2, 0.2, 0.0));
+
+        let count = intersect_vf(
+            &mut bopds,
+            &[(VertexId(0), vertex)],
+            &[(FaceId(10), square_face_with_square_hole())],
+            &[(VertexId(0), FaceId(10))],
+        );
+
+        assert_eq!(count, 1);
+        assert_eq!(bopds.vf_interferences().len(), 1);
+    }
+
     fn unit_square_face() -> Face<Point3, truck_modeling::Curve, truck_modeling::Surface> {
         let vertices = builder::vertices([
             Point3::new(0.0, 0.0, 0.0),
@@ -256,5 +311,43 @@ mod tests {
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(0.0, 1.0, 0.0),
         )))
+    }
+
+    fn square_face_with_square_hole() -> Face<Point3, truck_modeling::Curve, truck_modeling::Surface> {
+        let outer_vertices = builder::vertices([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        ]);
+        let hole_vertices = builder::vertices([
+            Point3::new(0.35, 0.35, 0.0),
+            Point3::new(0.65, 0.35, 0.0),
+            Point3::new(0.65, 0.65, 0.0),
+            Point3::new(0.35, 0.65, 0.0),
+        ]);
+
+        let outer = truck_topology::Wire::from(vec![
+            builder::line(&outer_vertices[0], &outer_vertices[1]),
+            builder::line(&outer_vertices[1], &outer_vertices[2]),
+            builder::line(&outer_vertices[2], &outer_vertices[3]),
+            builder::line(&outer_vertices[3], &outer_vertices[0]),
+        ]);
+        let mut hole = truck_topology::Wire::from(vec![
+            builder::line(&hole_vertices[0], &hole_vertices[1]),
+            builder::line(&hole_vertices[1], &hole_vertices[2]),
+            builder::line(&hole_vertices[2], &hole_vertices[3]),
+            builder::line(&hole_vertices[3], &hole_vertices[0]),
+        ]);
+        hole.invert();
+
+        Face::new(
+            vec![outer, hole],
+            truck_modeling::Surface::Plane(truck_modeling::Plane::new(
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            )),
+        )
     }
 }
