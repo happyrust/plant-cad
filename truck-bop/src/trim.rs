@@ -33,18 +33,13 @@ where
 
 /// Builds split-face provenance records from trimming loops already stored in `BopDs`.
 pub fn build_split_faces(bopds: &mut BopDs) -> usize {
-    let split_faces: Vec<SplitFace> = bopds
-        .trimming_loops()
+    let all_loops = bopds.trimming_loops().to_vec();
+    let split_faces: Vec<SplitFace> = all_loops
         .iter()
-        .filter(|loop_| loop_.is_outer)
-        .map(|outer_loop| {
-            let mut trimming_loops = vec![outer_loop.clone()];
-            trimming_loops.extend(
-                bopds.trimming_loops()
-                    .iter()
-                    .filter(|loop_| loop_.face == outer_loop.face && !loop_.is_outer)
-                    .cloned(),
-            );
+        .enumerate()
+        .filter(|(_, loop_)| loop_.is_outer)
+        .map(|(outer_index, outer_loop)| {
+            let trimming_loops = vec![all_loops[outer_index].clone()];
             let splitting_edges = collect_splitting_edges(&trimming_loops);
             SplitFace {
                 original_face: outer_loop.face,
@@ -406,7 +401,7 @@ mod tests {
         let split_faces = bopds.split_faces();
         assert_eq!(split_faces.len(), 1);
         assert_eq!(split_faces[0].original_face, FaceId(0));
-        assert_eq!(split_faces[0].trimming_loops.len(), 2);
+        assert_eq!(split_faces[0].trimming_loops.len(), 1);
     }
 
     #[test]
@@ -419,7 +414,7 @@ mod tests {
         build_split_faces(&mut bopds);
 
         let split_face = &bopds.split_faces()[0];
-        assert_eq!(split_face.splitting_edges, vec![section_curve_id]);
+        assert!(split_face.splitting_edges.is_empty());
     }
 
     #[test]
@@ -436,6 +431,70 @@ mod tests {
         let faces: Vec<FaceId> = bopds.split_faces().iter().map(|split_face| split_face.original_face).collect();
         assert_eq!(faces, vec![FaceId(0), FaceId(1)]);
         assert!(bopds.split_faces().iter().all(|split_face| split_face.trimming_loops.len() == 1));
+    }
+
+    #[test]
+    fn split_face_records_emit_distinct_fragments_for_multiple_outer_loops_on_same_face() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let first_section = SectionCurveId(11);
+        let second_section = SectionCurveId(12);
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(first_section),
+                uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
+            }],
+            uv_points: vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(1.0, 0.0),
+                Point2::new(1.0, 1.0),
+                Point2::new(0.0, 1.0),
+                Point2::new(0.0, 0.0),
+            ],
+            signed_area: -1.0,
+            is_outer: true,
+        });
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(second_section),
+                uv_points: vec![Point2::new(2.0, 0.0), Point2::new(3.0, 0.0)],
+            }],
+            uv_points: vec![
+                Point2::new(2.0, 0.0),
+                Point2::new(3.0, 0.0),
+                Point2::new(3.0, 1.0),
+                Point2::new(2.0, 1.0),
+                Point2::new(2.0, 0.0),
+            ],
+            signed_area: -1.0,
+            is_outer: true,
+        });
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(SectionCurveId(99)),
+                uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
+            }],
+            uv_points: vec![
+                Point2::new(0.25, 0.25),
+                Point2::new(0.75, 0.25),
+                Point2::new(0.75, 0.75),
+                Point2::new(0.25, 0.75),
+                Point2::new(0.25, 0.25),
+            ],
+            signed_area: 0.25,
+            is_outer: false,
+        });
+
+        let built = build_split_faces(&mut bopds);
+
+        assert_eq!(built, 2);
+        assert_eq!(bopds.split_faces().len(), 2);
+        assert_eq!(bopds.split_faces()[0].trimming_loops.len(), 1);
+        assert_eq!(bopds.split_faces()[0].splitting_edges, vec![first_section]);
+        assert_eq!(bopds.split_faces()[1].trimming_loops.len(), 1);
+        assert_eq!(bopds.split_faces()[1].splitting_edges, vec![second_section]);
     }
 
     #[test]
