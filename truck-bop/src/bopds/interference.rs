@@ -22,6 +22,17 @@ pub struct VEInterference {
     pub parameter: f64,
 }
 
+/// Vertex-face interference
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VFInterference {
+    /// Vertex
+    pub vertex: VertexId,
+    /// Face
+    pub face: FaceId,
+    /// Parameters on face surface
+    pub parameters: (f64, f64),
+}
+
 /// Edge-edge interference
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EEInterference {
@@ -47,6 +58,8 @@ pub struct InterferenceTable {
     pub vv: Vec<VVInterference>,
     /// Vertex-edge interferences
     pub ve: Vec<VEInterference>,
+    /// Vertex-face interferences
+    pub vf: Vec<VFInterference>,
     /// Edge-edge interferences
     pub ee: Vec<EEInterference>,
     /// Face-face interferences
@@ -64,6 +77,11 @@ impl InterferenceTable {
         self.ve.push(interference);
     }
 
+    /// Store a vertex-face interference.
+    pub fn push_vf(&mut self, interference: VFInterference) {
+        self.vf.push(interference);
+    }
+
     /// Borrow all vertex-vertex interferences.
     pub fn vv(&self) -> &[VVInterference] {
         &self.vv
@@ -72,6 +90,11 @@ impl InterferenceTable {
     /// Borrow all vertex-edge interferences.
     pub fn ve(&self) -> &[VEInterference] {
         &self.ve
+    }
+
+    /// Borrow all vertex-face interferences.
+    pub fn vf(&self) -> &[VFInterference] {
+        &self.vf
     }
 }
 
@@ -101,5 +124,19 @@ mod tests {
         table.push_ve(interference);
 
         assert_eq!(table.ve(), &[interference]);
+    }
+
+    #[test]
+    fn stores_vf_interference_records() {
+        let mut table = InterferenceTable::default();
+        let interference = VFInterference {
+            vertex: VertexId(1),
+            face: FaceId(2),
+            parameters: (0.25, 0.75),
+        };
+
+        table.push_vf(interference);
+
+        assert_eq!(table.vf(), &[interference]);
     }
 }
