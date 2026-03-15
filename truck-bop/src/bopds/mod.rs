@@ -9,10 +9,11 @@ mod pave;
 mod pave_block;
 mod shape_info;
 
-pub use interference::{InterferenceTable, VVInterference};
+pub use interference::{InterferenceTable, VEInterference, VVInterference};
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
 };
+pub use pave::Pave;
 
 use rustc_hash::FxHashMap;
 use crate::BopOptions;
@@ -27,6 +28,7 @@ pub struct BopDs {
     edge_to_shape: FxHashMap<EdgeId, ShapeId>,
     face_to_shape: FxHashMap<FaceId, ShapeId>,
     interferences: InterferenceTable,
+    paves: Vec<Pave>,
 }
 
 impl BopDs {
@@ -39,6 +41,7 @@ impl BopDs {
             edge_to_shape: FxHashMap::default(),
             face_to_shape: FxHashMap::default(),
             interferences: InterferenceTable::default(),
+            paves: Vec::new(),
         }
     }
 
@@ -119,9 +122,29 @@ impl BopDs {
         self.interferences.push_vv(interference);
     }
 
+    /// Store a vertex-edge interference.
+    pub fn push_ve_interference(&mut self, interference: VEInterference) {
+        self.interferences.push_ve(interference);
+    }
+
+    /// Store a pave.
+    pub fn push_pave(&mut self, pave: Pave) {
+        self.paves.push(pave);
+    }
+
     /// Borrow all stored vertex-vertex interferences.
     pub fn vv_interferences(&self) -> &[VVInterference] {
         self.interferences.vv()
+    }
+
+    /// Borrow all stored vertex-edge interferences.
+    pub fn ve_interferences(&self) -> &[VEInterference] {
+        self.interferences.ve()
+    }
+
+    /// Borrow all stored paves.
+    pub fn paves(&self) -> &[Pave] {
+        &self.paves
     }
 }
 
@@ -158,5 +181,22 @@ mod tests {
         ds.push_vv_interference(interference);
 
         assert_eq!(ds.vv_interferences(), &[interference]);
+    }
+
+    #[test]
+    fn stores_ve_interference_records_and_paves() {
+        let mut ds = BopDs::new();
+        let interference = VEInterference {
+            vertex: VertexId(0),
+            edge: EdgeId(1),
+            parameter: 0.25,
+        };
+        let pave = Pave::new(EdgeId(1), VertexId(0), 0.25, 1.0e-6).unwrap();
+
+        ds.push_ve_interference(interference);
+        ds.push_pave(pave);
+
+        assert_eq!(ds.ve_interferences(), &[interference]);
+        assert_eq!(ds.paves(), &[pave]);
     }
 }

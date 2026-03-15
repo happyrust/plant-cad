@@ -59,9 +59,19 @@ impl InterferenceTable {
         self.vv.push(interference);
     }
 
+    /// Store a vertex-edge interference.
+    pub fn push_ve(&mut self, interference: VEInterference) {
+        self.ve.push(interference);
+    }
+
     /// Borrow all vertex-vertex interferences.
     pub fn vv(&self) -> &[VVInterference] {
         &self.vv
+    }
+
+    /// Borrow all vertex-edge interferences.
+    pub fn ve(&self) -> &[VEInterference] {
+        &self.ve
     }
 }
 
@@ -77,5 +87,19 @@ mod tests {
         table.push_vv(interference);
 
         assert_eq!(table.vv(), &[interference]);
+    }
+
+    #[test]
+    fn stores_ve_interference_records() {
+        let mut table = InterferenceTable::default();
+        let interference = VEInterference {
+            vertex: VertexId(1),
+            edge: EdgeId(2),
+            parameter: 0.25,
+        };
+
+        table.push_ve(interference);
+
+        assert_eq!(table.ve(), &[interference]);
     }
 }
