@@ -11,7 +11,7 @@ pub(crate) mod shape_info;
 
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, SectionCurve,
-    VEInterference, VFInterference, VVInterference,
+    TrimmingEdge, TrimmingLoop, VEInterference, VFInterference, VVInterference,
 };
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
@@ -194,6 +194,11 @@ impl BopDs {
         self.interferences.push_section_curve(section_curve);
     }
 
+    /// Store a trimming loop.
+    pub fn push_trimming_loop(&mut self, trimming_loop: TrimmingLoop) {
+        self.interferences.push_trimming_loop(trimming_loop);
+    }
+
     /// Store a pave.
     pub fn push_pave(&mut self, pave: Pave) {
         self.paves.push(pave);
@@ -263,6 +268,11 @@ impl BopDs {
     /// Borrow all stored section curves.
     pub fn section_curves(&self) -> &[SectionCurve] {
         self.interferences.section_curves()
+    }
+
+    /// Borrow all stored trimming loops.
+    pub fn trimming_loops(&self) -> &[TrimmingLoop] {
+        self.interferences.trimming_loops()
     }
 
     /// Borrow all stored paves.
@@ -667,6 +677,32 @@ mod tests {
 
         assert_eq!(ds.section_curves(), &[section_curve]);
         assert_eq!(ds.ff_interferences(), &[interference]);
+    }
+
+    #[test]
+    fn stores_trimming_loop_records() {
+        let mut ds = BopDs::new();
+        let trimming_loop = TrimmingLoop {
+            face: FaceId(3),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(SectionCurveId(0)),
+                uv_points: vec![
+                    truck_base::cgmath64::Point2::new(0.0, 0.0),
+                    truck_base::cgmath64::Point2::new(1.0, 0.0),
+                ],
+            }],
+            uv_points: vec![
+                truck_base::cgmath64::Point2::new(0.0, 0.0),
+                truck_base::cgmath64::Point2::new(1.0, 0.0),
+                truck_base::cgmath64::Point2::new(0.0, 0.0),
+            ],
+            signed_area: 1.0,
+            is_outer: true,
+        };
+
+        ds.push_trimming_loop(trimming_loop.clone());
+
+        assert_eq!(ds.trimming_loops(), &[trimming_loop]);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {
