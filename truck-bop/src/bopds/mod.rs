@@ -7,7 +7,7 @@ mod ids;
 mod interference;
 mod pave;
 mod pave_block;
-mod shape_info;
+pub(crate) mod shape_info;
 
 pub use interference::{InterferenceTable, VEInterference, VVInterference};
 pub use ids::{
@@ -115,6 +115,21 @@ impl BopDs {
     /// Get shape info
     pub fn shape_info(&self, shape_id: ShapeId) -> Option<&ShapeInfo> {
         self.shapes.get(shape_id.0 as usize)
+    }
+
+    /// Get shape info for a registered vertex.
+    pub fn vertex_shape_info(&self, vertex_id: VertexId) -> Option<&ShapeInfo> {
+        self.vertex_shape_id(vertex_id).and_then(|shape_id| self.shape_info(shape_id))
+    }
+
+    /// Get shape info for a registered edge.
+    pub fn edge_shape_info(&self, edge_id: EdgeId) -> Option<&ShapeInfo> {
+        self.edge_shape_id(edge_id).and_then(|shape_id| self.shape_info(shape_id))
+    }
+
+    /// Get shape info for a registered face.
+    pub fn face_shape_info(&self, face_id: FaceId) -> Option<&ShapeInfo> {
+        self.face_shape_id(face_id).and_then(|shape_id| self.shape_info(shape_id))
     }
 
     /// Store a vertex-vertex interference.

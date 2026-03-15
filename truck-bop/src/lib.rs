@@ -21,9 +21,9 @@ mod intersect;
 mod options;
 mod pipeline;
 
-pub use bounding::BoundingProvider;
+pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use bopds::{BopDs, CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
-pub use broad_phase::{CandidatePairs, generate_candidate_pairs};
+pub use broad_phase::{CandidatePairs, generate_candidate_pairs, generate_candidate_pairs_from_bopds};
 pub use error::BopError;
 pub use intersect::{intersect_ve, intersect_vv};
 pub use options::BopOptions;
