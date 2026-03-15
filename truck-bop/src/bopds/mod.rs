@@ -1,5 +1,6 @@
 //! Boolean operation data structure
 
+mod arena;
 mod ids;
 
 pub use ids::{
