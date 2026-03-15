@@ -651,6 +651,10 @@ mod tests {
             start: VertexId(100),
             end: VertexId(101),
             samples: vec![Point3::new(0.0, 0.0, 0.0)],
+            face_parameters: [
+                (FaceId(0), vec![truck_base::cgmath64::Point2::new(0.0, 0.0)]),
+                (FaceId(1), vec![truck_base::cgmath64::Point2::new(0.0, 0.0)]),
+            ],
         };
         let interference = FFInterference {
             face1: FaceId(0),

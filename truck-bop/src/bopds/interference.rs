@@ -1,6 +1,7 @@
 //! Interference structures
 
 use crate::{EdgeId, FaceId, SectionCurveId, VertexId};
+use truck_base::cgmath64::Point2;
 
 /// Vertex-vertex interference
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +84,8 @@ pub struct SectionCurve {
     pub end: VertexId,
     /// Polyline samples describing the section in model space.
     pub samples: Vec<truck_base::cgmath64::Point3>,
+    /// Polyline samples of the section projected into each source face's parameter space.
+    pub face_parameters: [(FaceId, Vec<Point2>); 2],
 }
 
 /// Interference table
@@ -257,6 +260,10 @@ mod tests {
             start: VertexId(4),
             end: VertexId(5),
             samples: vec![truck_base::cgmath64::Point3::new(0.0, 0.0, 0.0)],
+            face_parameters: [
+                (FaceId(1), vec![Point2::new(0.0, 0.0)]),
+                (FaceId(2), vec![Point2::new(1.0, 1.0)]),
+            ],
         };
         let interference = FFInterference {
             face1: FaceId(1),

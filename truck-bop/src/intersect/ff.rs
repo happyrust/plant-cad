@@ -1,11 +1,12 @@
 //! Face-Face intersection detection.
 
 use crate::{bopds::FFInterference, bopds::SectionCurve, BopDs, FaceId, VertexId};
-use truck_base::{cgmath64::{MetricSpace, Point3}, tolerance::Tolerance};
+use truck_base::{cgmath64::{MetricSpace, Point2, Point3}, tolerance::Tolerance};
+use truck_geotrait::{Invertible, SearchParameter};
 use truck_meshalgo::analyzers::Collision;
 use truck_meshalgo::prelude::RobustMeshableShape;
-use truck_modeling::{builder, Curve, Surface, BSplineCurve, IntersectionCurve, KnotVec};
-use truck_topology::{Edge, Face, Shell};
+use truck_modeling::{Curve, Surface, BSplineCurve, IntersectionCurve, KnotVec};
+use truck_topology::{Face, Shell};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
 
@@ -70,11 +71,22 @@ pub fn intersect_ff(
             };
             let section_curve_id = bopds.next_section_curve_id();
 
+            let Some(face1_parameters) = project_section_to_face(face1, &samples) else {
+                continue;
+            };
+            let Some(face2_parameters) = project_section_to_face(face2, &samples) else {
+                continue;
+            };
+
             bopds.push_section_curve(SectionCurve {
                 id: section_curve_id,
                 faces: (face1_id, face2_id),
                 start,
                 end,
+                face_parameters: [
+                    (face1_id, face1_parameters),
+                    (face2_id, face2_parameters),
+                ],
                 samples,
             });
             bopds.push_ff_interference(FFInterference {
@@ -87,6 +99,80 @@ pub fn intersect_ff(
     }
 
     count
+}
+
+fn project_section_to_face(
+    face: &Face<Point3, Curve, Surface>,
+    samples: &[Point3],
+) -> Option<Vec<Point2>> {
+    let surface = face.oriented_surface();
+    let mut parameters = Vec::with_capacity(samples.len());
+    let mut previous = None;
+
+    for &point in samples {
+        let uv = surface
+            .search_parameter(point, previous.map(Into::into), SEARCH_PARAMETER_TRIALS)
+            .or_else(|| surface.search_parameter(point, None, SEARCH_PARAMETER_TRIALS))?;
+        parameters.push(Point2::new(uv.0, uv.1));
+        previous = Some(Point2::new(uv.0, uv.1));
+    }
+
+    if !face.orientation() {
+        parameters.reverse();
+    }
+
+    orient_parameter_loop(face, parameters)
+}
+
+fn orient_parameter_loop(
+    face: &Face<Point3, Curve, Surface>,
+    mut parameters: Vec<Point2>,
+) -> Option<Vec<Point2>> {
+    if parameters.len() < 2 {
+        return Some(parameters);
+    }
+
+    let mut boundary = parameter_boundary(face)?;
+    if !face.orientation() {
+        boundary.invert();
+    }
+
+    let section_area = signed_area(&parameters);
+    if section_area.is_sign_positive() != signed_area(&boundary).is_sign_positive() {
+        parameters.reverse();
+    }
+    Some(parameters)
+}
+
+fn parameter_boundary(face: &Face<Point3, Curve, Surface>) -> Option<Vec<Point2>> {
+    let surface = face.oriented_surface();
+    let wire = face.boundaries().into_iter().next()?;
+    let mut points = Vec::new();
+    let mut hint = None;
+    for vertex in wire.vertex_iter() {
+        let point = vertex.point();
+        let uv = surface
+            .search_parameter(point, hint.map(Into::into), SEARCH_PARAMETER_TRIALS)
+            .or_else(|| surface.search_parameter(point, None, SEARCH_PARAMETER_TRIALS))?;
+        let uv = Point2::new(uv.0, uv.1);
+        hint = Some(uv);
+        points.push(uv);
+    }
+    Some(points)
+}
+
+fn signed_area(polyline: &[Point2]) -> f64 {
+    if polyline.len() < 2 {
+        return 0.0;
+    }
+
+    let mut area = 0.0;
+    let mut prev = *polyline.last().unwrap();
+    for &curr in polyline {
+        area += (curr.x + prev.x) * (curr.y - prev.y);
+        prev = curr;
+    }
+    area / 2.0
 }
 
 fn face_by_id<'a>(
@@ -246,6 +332,8 @@ fn build_section_samples(
 mod tests {
     use super::*;
     use truck_base::cgmath64::{MetricSpace, Rad, Vector3};
+    use truck_modeling::builder;
+    use truck_topology::Edge;
 
     #[test]
     fn ff_plane_plane_section_generates_section_curve() {
@@ -260,11 +348,49 @@ mod tests {
         let section = &bopds.section_curves()[0];
         assert_eq!(section.faces, (FaceId(0), FaceId(1)));
         assert!(section.samples.len() >= 2);
+        assert_eq!(section.face_parameters[0].0, FaceId(0));
+        assert_eq!(section.face_parameters[1].0, FaceId(1));
+        assert_eq!(section.face_parameters[0].1.len(), section.samples.len());
+        assert_eq!(section.face_parameters[1].1.len(), section.samples.len());
         let start = section.samples.first().copied().unwrap();
         let end = section.samples.last().copied().unwrap();
         assert!(start.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2 || start.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2);
         assert!(end.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2 || end.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2);
         assert_ne!(section.start, section.end);
+
+        let yz_parameters = &section.face_parameters[0].1;
+        assert!(yz_parameters.windows(2).all(|pair| pair[0].distance(pair[1]) <= 1.0 + 1.0e-3));
+        let xy_parameters = &section.face_parameters[1].1;
+        assert!(xy_parameters.windows(2).all(|pair| pair[0].distance(pair[1]) <= 1.0 + 1.0e-3));
+    }
+
+    #[test]
+    fn section_projection_respects_inverted_face_orientation() {
+        let mut bopds = BopDs::new();
+        let mut inverted = yz_square_face();
+        inverted.invert();
+        let faces = vec![(FaceId(0), inverted), (FaceId(1), xy_square_face())];
+
+        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(count, 1);
+        let section = &bopds.section_curves()[0];
+        let yz_parameters = &section.face_parameters[0].1;
+        assert!(yz_parameters.first().unwrap().y >= yz_parameters.last().unwrap().y);
+    }
+
+    #[test]
+    fn section_projection_stores_uv_samples_for_both_faces() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), yz_square_face()), (FaceId(1), xy_square_face())];
+
+        intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        let section = &bopds.section_curves()[0];
+        for (face_id, uv_samples) in &section.face_parameters {
+            assert!(!uv_samples.is_empty(), "missing uv samples for face {:?}", face_id);
+            assert_eq!(uv_samples.len(), section.samples.len());
+        }
     }
 
     #[test]
