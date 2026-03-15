@@ -5,7 +5,7 @@ use truck_base::{
     bounding_box::BoundingBox,
     cgmath64::{Point3, Vector3},
 };
-use truck_geotrait::{BoundedCurve, Invertible};
+use truck_geotrait::{BoundedCurve, Invertible, ParametricSurface};
 use truck_topology::{Edge, Face, Vertex};
 
 const SAMPLE_COUNT: usize = 16;
@@ -37,16 +37,49 @@ where
 impl<C, S> BoundingProvider for Face<Point3, C, S>
 where
     C: Clone + BoundedCurve<Point = Point3> + Invertible,
+    S: FaceBoundingSurface,
 {
     fn bounding_box(&self, options: &BopOptions) -> BoundingBox<Point3> {
-        let mut bbox = BoundingBox::new();
-        for edge in self.boundaries().into_iter().flatten() {
-            let curve = edge.oriented_curve();
-            bbox += sample_curve_bbox(&curve);
-            bbox += curve_endpoints_bbox(&curve);
+        let mut bbox = face_boundary_box(self);
+        if let Some(surface_bbox) = self.surface().face_surface_bbox(self.orientation()) {
+            bbox += surface_bbox;
         }
         expand_bbox(bbox, options.geometric_tol)
     }
+}
+
+/// Provides an optional surface-derived bounding box for a face payload.
+pub trait FaceBoundingSurface: Clone {
+    /// Returns an optional surface-derived bounding box for the face orientation.
+    fn face_surface_bbox(&self, orientation: bool) -> Option<BoundingBox<Point3>>;
+}
+
+impl FaceBoundingSurface for truck_modeling::Surface {
+    fn face_surface_bbox(&self, orientation: bool) -> Option<BoundingBox<Point3>> {
+        if orientation {
+            sample_surface_bbox(self)
+        } else {
+            sample_surface_bbox(&self.inverse())
+        }
+    }
+}
+
+impl FaceBoundingSurface for () {
+    fn face_surface_bbox(&self, _orientation: bool) -> Option<BoundingBox<Point3>> { None }
+}
+
+fn face_boundary_box<C, S>(face: &Face<Point3, C, S>) -> BoundingBox<Point3>
+where
+    C: Clone + BoundedCurve<Point = Point3> + Invertible,
+    S: Clone,
+{
+    let mut bbox = BoundingBox::new();
+    for edge in face.boundary_iters().into_iter().flatten() {
+        let curve = edge.oriented_curve();
+        bbox += sample_curve_bbox(&curve);
+        bbox += curve_endpoints_bbox(&curve);
+    }
+    bbox
 }
 
 fn expand_point_bbox(point: Point3, tolerance: f64) -> BoundingBox<Point3> {
@@ -92,6 +125,26 @@ where
         bbox.push(sampler(i));
     }
     bbox
+}
+
+fn sample_surface_bbox<S>(surface: &S) -> Option<BoundingBox<Point3>>
+where
+    S: ParametricSurface<Point = Point3>,
+{
+    let (Some((u0, u1)), Some((v0, v1))) = surface.try_range_tuple() else {
+        return None;
+    };
+    let mut bbox = BoundingBox::new();
+
+    for ui in 0..=SAMPLE_COUNT {
+        let u = interpolate(u0, u1, ui, SAMPLE_COUNT);
+        for vi in 0..=SAMPLE_COUNT {
+            let v = interpolate(v0, v1, vi, SAMPLE_COUNT);
+            bbox.push(surface.subs(u, v));
+        }
+    }
+
+    Some(bbox)
 }
 
 fn interpolate(start: f64, end: f64, step: usize, divisions: usize) -> f64 {
@@ -146,31 +199,68 @@ mod tests {
     }
 
     #[test]
-    fn bounding_provider_face_contains_boundary_curve_samples_and_expansion() {
+    fn bounding_provider_face_contains_surface_samples_and_expansion() {
         let options = BopOptions { geometric_tol: 0.2, ..BopOptions::default() };
         let vertices = builder::vertices([
             Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.5),
+            Point3::new(1.0, 0.0, 0.0),
             Point3::new(0.0, 1.0, 1.0),
         ]);
-        let edge0: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[0], &vertices[1]);
-        let edge1: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[1], &vertices[2]);
-        let edge2: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[2], &vertices[0]);
-        let face: Face<Point3, truck_modeling::Curve, ()> =
-            Face::new(vec![truck_topology::Wire::from(vec![edge0.clone(), edge1.clone(), edge2.clone()])], ());
+        let wire = vec![
+            builder::line(&vertices[0], &vertices[1]),
+            builder::line(&vertices[1], &vertices[2]),
+            builder::line(&vertices[2], &vertices[0]),
+        ]
+        .into();
+        let face: Face<Point3, truck_modeling::Curve, truck_modeling::Surface> =
+            builder::try_attach_plane(vec![wire]).expect("triangle should define a plane");
 
         let bbox = face.bounding_box(&options);
-        let mut raw_bbox = BoundingBox::new();
+        let surface: truck_modeling::Surface = face.oriented_surface();
+        let mut raw_bbox = sample_surface_bbox(&surface).expect("homotopy surface should be bounded");
         for edge in face.boundary_iters().into_iter().flatten() {
-            let curve: truck_modeling::Curve = edge.oriented_curve();
+            let curve = edge.oriented_curve();
             raw_bbox += sample_curve_bbox(&curve);
             raw_bbox += curve_endpoints_bbox(&curve);
-            for i in 0..=SAMPLE_COUNT {
-                let t = interpolate(0.0, 1.0, i, SAMPLE_COUNT);
-                assert!(bbox.contains(curve.subs(t)));
+        }
+
+        let (Some((u0, u1)), Some((v0, v1))) = surface.try_range_tuple() else {
+            panic!("homotopy surface should provide bounded parameter ranges");
+        };
+        for ui in 0..=SAMPLE_COUNT {
+            let u = interpolate(u0, u1, ui, SAMPLE_COUNT);
+            for vi in 0..=SAMPLE_COUNT {
+                let v = interpolate(v0, v1, vi, SAMPLE_COUNT);
+                assert!(bbox.contains(surface.subs(u, v)));
             }
         }
         assert_eq!(bbox.min(), raw_bbox.min() - Vector3::new(0.2, 0.2, 0.2));
         assert_eq!(bbox.max(), raw_bbox.max() + Vector3::new(0.2, 0.2, 0.2));
+    }
+
+    #[test]
+    fn face_bounding_box_without_surface_falls_back_to_boundary() {
+        let options = BopOptions { geometric_tol: 0.05, ..BopOptions::default() };
+        let vertices = builder::vertices([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        ]);
+        let edge0: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[0], &vertices[1]);
+        let edge1: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[1], &vertices[2]);
+        let edge2: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[2], &vertices[0]);
+        let wire = vec![edge0.clone(), edge1.clone(), edge2.clone()].into();
+        let face: Face<Point3, truck_modeling::Curve, ()> = Face::new(vec![wire], ());
+
+        let bbox = face.bounding_box(&options);
+        let mut raw_boundary_bbox = BoundingBox::new();
+        for edge in [edge0, edge1, edge2] {
+            let curve = edge.oriented_curve();
+            raw_boundary_bbox += sample_curve_bbox(&curve);
+            raw_boundary_bbox += curve_endpoints_bbox(&curve);
+        }
+
+        assert_eq!(bbox.min(), raw_boundary_bbox.min() - Vector3::new(0.05, 0.05, 0.05));
+        assert_eq!(bbox.max(), raw_boundary_bbox.max() + Vector3::new(0.05, 0.05, 0.05));
     }
 }
