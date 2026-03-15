@@ -13,11 +13,13 @@
 
 //! Boolean operation infrastructure for truck
 
+mod bounding;
 mod bopds;
 mod error;
 mod options;
 mod pipeline;
 
+pub use bounding::BoundingProvider;
 pub use bopds::{BopDs, CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use error::BopError;
 pub use options::BopOptions;
