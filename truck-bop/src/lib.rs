@@ -15,12 +15,14 @@
 
 mod bounding;
 mod bopds;
+mod broad_phase;
 mod error;
 mod options;
 mod pipeline;
 
 pub use bounding::BoundingProvider;
 pub use bopds::{BopDs, CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
+pub use broad_phase::{CandidatePairs, generate_candidate_pairs};
 pub use error::BopError;
 pub use options::BopOptions;
 pub use pipeline::BooleanOp;
