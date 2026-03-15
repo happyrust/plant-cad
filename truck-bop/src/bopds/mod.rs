@@ -9,7 +9,7 @@ mod pave;
 mod pave_block;
 pub(crate) mod shape_info;
 
-pub use interference::{EFInterference, InterferenceTable, VEInterference, VFInterference, VVInterference};
+pub use interference::{EEInterference, EFInterference, InterferenceTable, VEInterference, VFInterference, VVInterference};
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
 };
@@ -147,6 +147,11 @@ impl BopDs {
         self.interferences.push_vf(interference);
     }
 
+    /// Store an edge-edge interference.
+    pub fn push_ee_interference(&mut self, interference: EEInterference) {
+        self.interferences.push_ee(interference);
+    }
+
     /// Store an edge-face interference.
     pub fn push_ef_interference(&mut self, interference: EFInterference) {
         self.interferences.push_ef(interference);
@@ -170,6 +175,11 @@ impl BopDs {
     /// Borrow all stored vertex-face interferences.
     pub fn vf_interferences(&self) -> &[VFInterference] {
         self.interferences.vf()
+    }
+
+    /// Borrow all stored edge-edge interferences.
+    pub fn ee_interferences(&self) -> &[EEInterference] {
+        self.interferences.ee()
     }
 
     /// Borrow all stored edge-face interferences.
@@ -247,6 +257,21 @@ mod tests {
         ds.push_vf_interference(interference);
 
         assert_eq!(ds.vf_interferences(), &[interference]);
+    }
+
+    #[test]
+    fn stores_ee_interference_records() {
+        let mut ds = BopDs::new();
+        let interference = EEInterference {
+            edge1: EdgeId(0),
+            edge2: EdgeId(1),
+            t_a: 0.25,
+            t_b: 0.75,
+        };
+
+        ds.push_ee_interference(interference);
+
+        assert_eq!(ds.ee_interferences(), &[interference]);
     }
 
     #[test]

@@ -34,12 +34,16 @@ pub struct VFInterference {
 }
 
 /// Edge-edge interference
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EEInterference {
     /// First edge
     pub edge1: EdgeId,
     /// Second edge
     pub edge2: EdgeId,
+    /// Parameter on the first edge curve
+    pub t_a: f64,
+    /// Parameter on the second edge curve
+    pub t_b: f64,
 }
 
 /// Edge-face interference
@@ -97,6 +101,11 @@ impl InterferenceTable {
         self.vf.push(interference);
     }
 
+    /// Store an edge-edge interference.
+    pub fn push_ee(&mut self, interference: EEInterference) {
+        self.ee.push(interference);
+    }
+
     /// Store an edge-face interference.
     pub fn push_ef(&mut self, interference: EFInterference) {
         self.ef.push(interference);
@@ -115,6 +124,11 @@ impl InterferenceTable {
     /// Borrow all vertex-face interferences.
     pub fn vf(&self) -> &[VFInterference] {
         &self.vf
+    }
+
+    /// Borrow all edge-edge interferences.
+    pub fn ee(&self) -> &[EEInterference] {
+        &self.ee
     }
 
     /// Borrow all edge-face interferences.
@@ -163,6 +177,21 @@ mod tests {
         table.push_vf(interference);
 
         assert_eq!(table.vf(), &[interference]);
+    }
+
+    #[test]
+    fn stores_ee_interference_records() {
+        let mut table = InterferenceTable::default();
+        let interference = EEInterference {
+            edge1: EdgeId(1),
+            edge2: EdgeId(2),
+            t_a: 0.25,
+            t_b: 0.75,
+        };
+
+        table.push_ee(interference);
+
+        assert_eq!(table.ee(), &[interference]);
     }
 
     #[test]
