@@ -1,0 +1,60 @@
+{
+  "milestone": "pave-splitting",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cargo test -p truck-bop",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cargo check -p truck-bop",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 0,
+    "failed": 2,
+    "failedFeatures": [
+      "pave-sorting-dedup",
+      "paveblock-creation"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "pave-sorting-dedup",
+      "severity": "blocking",
+      "description": "`truck-bop/src/bopds/mod.rs:286` synthesizes endpoint paves with hard-coded `VertexId(u32::MAX - 1)` / `VertexId(u32::MAX)` instead of allocated generated IDs, so endpoint paves can alias unrelated vertices and are unsafe as stable topology references."
+    },
+    {
+      "featureId": "paveblock-creation",
+      "severity": "blocking",
+      "description": "`truck-bop/src/bopds/pave_block.rs:29` normalizes only the numeric parameter range in `PaveBlock::from_pave_pair` without reordering `start_vertex`/`end_vertex`, so a descending pave pair can produce a block whose vertices do not match its stored `(min, max)` range."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Documented that synthetic pave endpoints must allocate generated vertex IDs via `BopDs::next_generated_vertex_id()` rather than fixed sentinel IDs.",
+      "sourceFeature": "pave-sorting-dedup"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update `rust-bop-worker` verification guidance to explicitly allow mission-documented exceptions where full-crate `cargo test -p truck-bop` or `cargo clippy -p truck-bop` are known noisy or blocked by unrelated baseline issues, and direct workers to run the feature-specific checks plus `cargo check -p truck-bop` instead.",
+      "evidence": "Both `pave-sorting-dedup` and `paveblock-creation` reviews reported that the current skill requires unconditional full-crate test/clippy success, while mission `AGENTS.md` already documents known out-of-scope failures/noise and both workers had to record the same deviation.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

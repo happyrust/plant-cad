@@ -24,6 +24,7 @@ truck-bop follows OCCT's BOPAlgo_PaveFiller and BOPDS_DS architecture:
 
 - **Geometric Intersections**: Newton-Raphson for projection, subdivision for curve-curve
 - **Pave Splitting**: Sort by parameter, deduplicate within tolerance
+- **Synthetic pave endpoints**: When an edge is missing endpoint paves, allocate synthetic endpoint vertex IDs through `BopDs::next_generated_vertex_id()` instead of using sentinel constants so endpoint paves remain stable references in downstream topology.
 - **Face Splitting**: UV projection, trimming loops
 - **Classification**: Ray casting for point-in-solid
 - **Topology Rebuild**: Vertex merging, edge sewing, shell assembly
