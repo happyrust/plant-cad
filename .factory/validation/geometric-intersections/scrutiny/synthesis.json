@@ -1,0 +1,101 @@
+{
+  "milestone": "geometric-intersections",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cargo test -p truck-bop",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cargo check -p truck-bop",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 0,
+    "failed": 3,
+    "failedFeatures": [
+      "ee-intersection-impl",
+      "ef-intersection-impl",
+      "vf-intersection-impl"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "ee-intersection-impl",
+      "severity": "blocking",
+      "description": "`intersect_ee` returns immediately after the first Newton-refined hit, so it can never report additional valid intersections for the same edge pair. That violates the feature's expected behavior for multiple intersections such as circle-circle or other multi-hit curves."
+    },
+    {
+      "featureId": "ee-intersection-impl",
+      "severity": "blocking",
+      "description": "The test suite only covers line-segment cases and parameter bounds; it does not include any multi-intersection curved case despite the feature requirement calling out cases like circle-circle. As written, the implementation's sampled fallback is unproven for the core non-linear behavior the feature claims to support."
+    },
+    {
+      "featureId": "ee-intersection-impl",
+      "severity": "blocking",
+      "description": "`EEInterference` stores only the two edge IDs, with no fields for the intersection parameters on either curve. The feature contract explicitly requires storing parameters for both curves, so the data model cannot represent the required result."
+    },
+    {
+      "featureId": "ee-intersection-impl",
+      "severity": "blocking",
+      "description": "`BopDs` exports no EE interference API and has no `push_ee_interference`/`ee_interferences` accessors, so the feature still does not persist EE interferences into the shared boolean-operation data structure. This matches the worker handoff note that EE storage was left unwired."
+    },
+    {
+      "featureId": "ef-intersection-impl",
+      "severity": "blocking",
+      "description": "`point_projects_inside_face` builds a 2D polygon from `vertex.point().x`/`.y`, but face boundaries are stored in model-space 3D points, not in the surface's parameter space. For any rotated plane or non-planar face, valid `(u, v)` hits are tested against an unrelated XY polygon and can be falsely rejected or accepted, so the algorithm does not correctly check whether the projected point lies within face bounds."
+    },
+    {
+      "featureId": "ef-intersection-impl",
+      "severity": "blocking",
+      "description": "The feature requires handling multiple intersections on a single curve and graceful tangent cases, but the final tests only cover separate straight edges crossing a plane and a line starting on a plane. The worker transcript explicitly notes that curved crossings were not being found and then simplifies the tests to line edges only, leaving the promised general curve behavior unverified and likely unsupported."
+    },
+    {
+      "featureId": "vf-intersection-impl",
+      "severity": "blocking",
+      "description": "The trimmed-face containment test uses `face.boundaries().into_iter().all(...)`, so any point inside an inner boundary (hole) is incorrectly accepted because being inside the outer loop and inside the hole makes every boundary predicate true. VF intersections will therefore be recorded for vertices lying in void regions of faces, violating the requirement to verify the projection is within the actual face bounds."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Documented trimmed-face containment semantics for `Face::boundaries()` and the need for outer-minus-holes containment logic.",
+      "sourceFeature": "vf-intersection-impl"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md / rust-bop-worker skill",
+      "suggestion": "Align worker guidance with validation config by explicitly documenting that milestone validators skip `cargo clippy -p truck-bop` when workspace-wide pre-existing clippy failures are already called out.",
+      "evidence": "Reviews for `vf-intersection-impl`, `ee-intersection-impl`, and `ef-intersection-impl` all flagged the same mismatch between `.factory/skills/rust-bop-worker/SKILL.md` and the mission guidance plus `.factory/services.yaml`.",
+      "isSystemic": true
+    },
+    {
+      "target": "library/architecture.md",
+      "suggestion": "Extend the interference-table architecture note to state that EE records must preserve both curve parameters so future workers wire BopDs storage to the feature contract.",
+      "evidence": "The `ee-intersection-impl` review found `EEInterference` only stores edge IDs, which likely stemmed from the architecture note naming EE records without describing their required payload.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Skip-clippy note from EF/VF/EE reviews",
+      "reason": "recommend-to-orchestrator; the change is normative guidance for AGENTS/skill files rather than a factual library/services update."
+    },
+    {
+      "observation": "EE-parameter architecture gap from `ee-intersection-impl` review",
+      "reason": "ambiguous for direct application during scrutiny because it prescribes future data-model requirements rather than documenting a confirmed current invariant."
+    }
+  ],
+  "previousRound": null
+}

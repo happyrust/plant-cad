@@ -16,6 +16,10 @@ truck-bop follows OCCT's BOPAlgo_PaveFiller and BOPDS_DS architecture:
 - **Section Curves**: Face-face intersection results
 - **Interference Tables**: VV, VE, VF, EE, EF, FF records
 
+## Geometry Notes
+
+- **Trimmed-face containment**: `Face::boundaries()` yields all boundary wires with face orientation applied, including inner loops. Point containment for trimmed faces must therefore use outer-minus-holes logic instead of requiring every loop to contain the point.
+
 ## Key Algorithms
 
 - **Geometric Intersections**: Newton-Raphson for projection, subdivision for curve-curve

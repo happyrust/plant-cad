@@ -1,0 +1,34 @@
+{
+  "featureId": "ef-intersection-impl",
+  "reviewedAt": "2026-03-15T15:31:54.966988+00:00",
+  "commitId": "7d32de94",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The implementation stores EF records and passes the targeted tests, but it does not satisfy the feature contract for general edge-face intersections. The face-bound check assumes the face's UV coordinates are the 3D x/y coordinates of boundary vertices, and the tests were narrowed to plane/line cases after the worker could not make curved crossings converge.",
+    "issues": [
+      {
+        "file": "truck-bop/src/intersect/ef.rs",
+        "line": 193,
+        "severity": "blocking",
+        "description": "`point_projects_inside_face` builds a 2D polygon from `vertex.point().x`/`.y`, but face boundaries are stored in model-space 3D points, not in the surface's parameter space. For any rotated plane or non-planar face, valid `(u, v)` hits are tested against an unrelated XY polygon and can be falsely rejected or accepted, so the algorithm does not correctly check whether the projected point lies within face bounds."
+      },
+      {
+        "file": "truck-bop/src/intersect/ef.rs",
+        "line": 334,
+        "severity": "blocking",
+        "description": "The feature requires handling multiple intersections on a single curve and graceful tangent cases, but the final tests only cover separate straight edges crossing a plane and a line starting on a plane. The worker transcript explicitly notes that curved crossings were not being found and then simplifies the tests to line edges only, leaving the promised general curve behavior unverified and likely unsupported."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still mandates a clean `cargo clippy -p truck-bop` run, but mission guidance and `.factory/services.yaml` already document that clippy is intentionally skipped because of pre-existing failures in other workspace crates.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` step 4 says to run and address `cargo clippy -p truck-bop`; `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` marks clippy failures outside scope, and `/Volumes/DPC/work/cad/truck-new/.factory/services.yaml` sets `lint` to `echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit `7d32de94` and the worker transcript/handoff for `ef-intersection-impl`. The feature should fail scrutiny: boundary inclusion is computed in world XY instead of the face's UV space, and the final test coverage was narrowed after curved/tangent cases failed, so the implementation does not convincingly meet the edge-face feature contract beyond simple plane/line cases."
+}

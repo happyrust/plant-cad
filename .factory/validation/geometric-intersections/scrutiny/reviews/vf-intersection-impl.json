@@ -1,0 +1,33 @@
+{
+  "featureId": "vf-intersection-impl",
+  "reviewedAt": "2026-03-15T15:30:36.575066+00:00",
+  "commitId": "e8a5890a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The VF feature adds storage and a surface-projection based detector, but the face-bounds check is incorrect for trimmed faces with inner loops because it accepts points inside holes.",
+    "issues": [
+      {
+        "file": "truck-bop/src/intersect/vf.rs",
+        "line": 68,
+        "severity": "blocking",
+        "description": "The trimmed-face containment test uses `face.boundaries().into_iter().all(...)`, so any point inside an inner boundary (hole) is incorrectly accepted because being inside the outer loop and inside the hole makes every boundary predicate true. VF intersections will therefore be recorded for vertices lying in void regions of faces, violating the requirement to verify the projection is within the actual face bounds."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "For Truck topology faces, `Face::boundaries()` returns all boundary wires with face orientation applied, including inner loops. Containment for trimmed faces therefore needs outer-minus-holes logic rather than checking every boundary with `all(...)`.",
+      "evidence": "Current implementation: `truck-bop/src/intersect/vf.rs:68`; face API docs show multiple boundaries and orientation behavior in `truck-topology/src/face.rs:101` and `truck-topology/src/face.rs:1076`."
+    },
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill requires `cargo clippy -p truck-bop` in the verification step, but mission guidance and services already document that clippy may fail due to pre-existing out-of-scope workspace issues. The skill should explicitly call out this known exception so workers do not appear to deviate when they correctly stop at that boundary.",
+      "evidence": "Skill requirement in `.factory/skills/rust-bop-worker/SKILL.md`; documented exception in mission `AGENTS.md` and `.factory/services.yaml` lint command override."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the VF transcript skeleton, handoff, commit `e8a5890a`, and current `truck-bop` sources. Found one blocking correctness issue: the face-boundary test treats holes as valid interior, so VF interferences can be stored for points projected into trimmed-out regions."
+}
