@@ -39,7 +39,20 @@ pub fn build_split_faces(bopds: &mut BopDs) -> usize {
         .enumerate()
         .filter(|(_, loop_)| loop_.is_outer)
         .map(|(outer_index, outer_loop)| {
-            let trimming_loops = vec![all_loops[outer_index].clone()];
+            let mut trimming_loops = vec![all_loops[outer_index].clone()];
+            trimming_loops.extend(
+                all_loops
+                    .iter()
+                    .enumerate()
+                    .filter(|(inner_index, loop_)| {
+                        !loop_.is_outer
+                            && *inner_index != outer_index
+                            && loop_.face == outer_loop.face
+                            && loop_contained_by(loop_, outer_loop)
+                            && !contained_by_other_outer(*inner_index, outer_index, &all_loops)
+                    })
+                    .map(|(_, loop_)| loop_.clone()),
+            );
             let splitting_edges = collect_splitting_edges(&trimming_loops);
             SplitFace {
                 original_face: outer_loop.face,
@@ -251,6 +264,104 @@ fn collect_splitting_edges(trimming_loops: &[TrimmingLoop]) -> Vec<SectionCurveI
     splitting_edges
 }
 
+fn loop_contained_by(inner: &TrimmingLoop, outer: &TrimmingLoop) -> bool {
+    polygon_centroid(&inner.uv_points)
+        .filter(|point| !point_on_polygon_boundary(&outer.uv_points, *point))
+        .is_some_and(|point| point_in_polygon(&outer.uv_points, point))
+}
+
+fn contained_by_other_outer(
+    inner_index: usize,
+    owner_outer_index: usize,
+    all_loops: &[TrimmingLoop],
+) -> bool {
+    let inner = &all_loops[inner_index];
+    all_loops
+        .iter()
+        .enumerate()
+        .filter(|(outer_index, candidate)| {
+            candidate.is_outer
+                && *outer_index != owner_outer_index
+                && candidate.face == inner.face
+                && loop_contained_by(inner, candidate)
+        })
+        .any(|(_, candidate)| {
+            let owner = &all_loops[owner_outer_index];
+            candidate.signed_area.abs() < owner.signed_area.abs()
+        })
+}
+
+fn point_in_polygon(polygon: &[Point2], point: Point2) -> bool {
+    let mut inside = false;
+    let mut prev = *polygon.last().unwrap();
+    for &curr in polygon {
+        let intersects = (curr.y > point.y) != (prev.y > point.y)
+            && point.x < (prev.x - curr.x) * (point.y - curr.y) / (prev.y - curr.y) + curr.x;
+        if intersects {
+            inside = !inside;
+        }
+        prev = curr;
+    }
+    inside
+}
+
+fn polygon_centroid(polygon: &[Point2]) -> Option<Point2> {
+    let vertices = open_polygon_vertices(polygon);
+    if vertices.len() < 3 {
+        return None;
+    }
+
+    let mut area2 = 0.0;
+    let mut centroid_x = 0.0;
+    let mut centroid_y = 0.0;
+    for window in vertices.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        let cross = start.x * end.y - end.x * start.y;
+        area2 += cross;
+        centroid_x += (start.x + end.x) * cross;
+        centroid_y += (start.y + end.y) * cross;
+    }
+
+    if area2.abs() <= 1.0e-9 {
+        return None;
+    }
+
+    Some(Point2::new(
+        centroid_x / (3.0 * area2),
+        centroid_y / (3.0 * area2),
+    ))
+}
+
+fn open_polygon_vertices(polygon: &[Point2]) -> &[Point2] {
+    if polygon.len() >= 2 && polygon.first() == polygon.last() {
+        &polygon[..polygon.len() - 1]
+    } else {
+        polygon
+    }
+}
+
+fn point_on_polygon_boundary(polygon: &[Point2], point: Point2) -> bool {
+    polygon.windows(2).any(|segment| point_on_segment(segment[0], segment[1], point))
+}
+
+fn point_on_segment(start: Point2, end: Point2, point: Point2) -> bool {
+    let edge = end - start;
+    let offset = point - start;
+    let cross = edge.x * offset.y - edge.y * offset.x;
+    if cross.abs() > 1.0e-9 {
+        return false;
+    }
+
+    let dot = edge.x * offset.x + edge.y * offset.y;
+    if dot < -1.0e-9 {
+        return false;
+    }
+
+    let length2 = edge.x * edge.x + edge.y * edge.y;
+    dot <= length2 + 1.0e-9
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,7 +512,7 @@ mod tests {
         let split_faces = bopds.split_faces();
         assert_eq!(split_faces.len(), 1);
         assert_eq!(split_faces[0].original_face, FaceId(0));
-        assert_eq!(split_faces[0].trimming_loops.len(), 1);
+        assert_eq!(split_faces[0].trimming_loops.len(), 2);
     }
 
     #[test]
@@ -414,7 +525,7 @@ mod tests {
         build_split_faces(&mut bopds);
 
         let split_face = &bopds.split_faces()[0];
-        assert!(split_face.splitting_edges.is_empty());
+        assert_eq!(split_face.splitting_edges, vec![section_curve_id]);
     }
 
     #[test]
@@ -491,10 +602,137 @@ mod tests {
 
         assert_eq!(built, 2);
         assert_eq!(bopds.split_faces().len(), 2);
-        assert_eq!(bopds.split_faces()[0].trimming_loops.len(), 1);
-        assert_eq!(bopds.split_faces()[0].splitting_edges, vec![first_section]);
+        assert_eq!(bopds.split_faces()[0].trimming_loops.len(), 2);
+        assert_eq!(bopds.split_faces()[0].splitting_edges, vec![first_section, SectionCurveId(99)]);
         assert_eq!(bopds.split_faces()[1].trimming_loops.len(), 1);
         assert_eq!(bopds.split_faces()[1].splitting_edges, vec![second_section]);
+    }
+
+    #[test]
+    fn split_face_records_assign_inner_loop_to_containing_outer_fragment_only() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let outer_a = SectionCurveId(11);
+        let outer_b = SectionCurveId(12);
+        let hole = SectionCurveId(13);
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(outer_a),
+                uv_points: vec![Point2::new(0.0, 0.0), Point2::new(4.0, 0.0)],
+            }],
+            uv_points: vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(4.0, 0.0),
+                Point2::new(4.0, 4.0),
+                Point2::new(0.0, 4.0),
+                Point2::new(0.0, 0.0),
+            ],
+            signed_area: -16.0,
+            is_outer: true,
+        });
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(outer_b),
+                uv_points: vec![Point2::new(5.0, 0.0), Point2::new(7.0, 0.0)],
+            }],
+            uv_points: vec![
+                Point2::new(5.0, 0.0),
+                Point2::new(7.0, 0.0),
+                Point2::new(7.0, 2.0),
+                Point2::new(5.0, 2.0),
+                Point2::new(5.0, 0.0),
+            ],
+            signed_area: -4.0,
+            is_outer: true,
+        });
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(hole),
+                uv_points: vec![Point2::new(1.0, 1.0), Point2::new(2.0, 1.0)],
+            }],
+            uv_points: vec![
+                Point2::new(1.0, 1.0),
+                Point2::new(2.0, 1.0),
+                Point2::new(2.0, 2.0),
+                Point2::new(1.0, 2.0),
+                Point2::new(1.0, 1.0),
+            ],
+            signed_area: 1.0,
+            is_outer: false,
+        });
+
+        let built = build_split_faces(&mut bopds);
+
+        assert_eq!(built, 2);
+        assert_eq!(bopds.split_faces()[0].trimming_loops.len(), 2);
+        assert_eq!(bopds.split_faces()[0].splitting_edges, vec![outer_a, hole]);
+        assert_eq!(bopds.split_faces()[1].trimming_loops.len(), 1);
+        assert_eq!(bopds.split_faces()[1].splitting_edges, vec![outer_b]);
+    }
+
+    #[test]
+    fn split_face_records_do_not_duplicate_inner_loop_across_nested_outer_fragments() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let outer = SectionCurveId(21);
+        let nested_outer = SectionCurveId(22);
+        let hole = SectionCurveId(23);
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(outer),
+                uv_points: vec![Point2::new(0.0, 0.0), Point2::new(6.0, 0.0)],
+            }],
+            uv_points: vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(6.0, 0.0),
+                Point2::new(6.0, 6.0),
+                Point2::new(0.0, 6.0),
+                Point2::new(0.0, 0.0),
+            ],
+            signed_area: -36.0,
+            is_outer: true,
+        });
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(nested_outer),
+                uv_points: vec![Point2::new(1.0, 1.0), Point2::new(5.0, 1.0)],
+            }],
+            uv_points: vec![
+                Point2::new(1.0, 1.0),
+                Point2::new(5.0, 1.0),
+                Point2::new(5.0, 5.0),
+                Point2::new(1.0, 5.0),
+                Point2::new(1.0, 1.0),
+            ],
+            signed_area: -16.0,
+            is_outer: true,
+        });
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(hole),
+                uv_points: vec![Point2::new(2.0, 2.0), Point2::new(3.0, 2.0)],
+            }],
+            uv_points: vec![
+                Point2::new(2.0, 2.0),
+                Point2::new(3.0, 2.0),
+                Point2::new(3.0, 3.0),
+                Point2::new(2.0, 3.0),
+                Point2::new(2.0, 2.0),
+            ],
+            signed_area: 1.0,
+            is_outer: false,
+        });
+
+        build_split_faces(&mut bopds);
+
+        assert_eq!(bopds.split_faces()[0].trimming_loops.len(), 1);
+        assert_eq!(bopds.split_faces()[0].splitting_edges, vec![outer]);
+        assert_eq!(bopds.split_faces()[1].trimming_loops.len(), 2);
+        assert_eq!(bopds.split_faces()[1].splitting_edges, vec![nested_outer, hole]);
     }
 
     #[test]
