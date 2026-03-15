@@ -282,10 +282,12 @@ impl BopDs {
         let curve = edge.oriented_curve();
         let (start, end) = curve.range_tuple();
         let tolerance = self.options.parametric_tol;
+        let start_vertex = self.next_generated_vertex_id();
+        let end_vertex = self.next_generated_vertex_id();
 
-        self.insert_or_merge_pave(Pave::new(edge_id, VertexId(u32::MAX - 1), start, tolerance)
+        self.insert_or_merge_pave(Pave::new(edge_id, start_vertex, start, tolerance)
             .expect("parametric tolerance is validated when BopOptions is created"));
-        self.insert_or_merge_pave(Pave::new(edge_id, VertexId(u32::MAX), end, tolerance)
+        self.insert_or_merge_pave(Pave::new(edge_id, end_vertex, end, tolerance)
             .expect("parametric tolerance is validated when BopOptions is created"));
     }
 
@@ -437,6 +439,55 @@ mod tests {
 
         let parameters: Vec<f64> = ds.paves_for_edge(EdgeId(1)).into_iter().map(|pave| pave.parameter).collect();
         assert_eq!(parameters, vec![0.0, 0.25, 1.0]);
+    }
+
+    #[test]
+    fn pave_sorting_allocates_generated_vertex_ids_for_missing_endpoints() {
+        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
+        let edge = line_edge(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+        );
+
+        ds.push_pave(Pave::new(EdgeId(2), VertexId(10), 0.25, 1.0e-8).unwrap());
+        ds.rebuild_paves_for_edges(&[(EdgeId(2), edge)]);
+
+        let paves = ds.paves_for_edge(EdgeId(2));
+        let endpoint_vertices: Vec<VertexId> = paves
+            .into_iter()
+            .filter(|pave| pave.parameter == 0.0 || pave.parameter == 1.0)
+            .map(|pave| pave.vertex)
+            .collect();
+
+        assert_eq!(endpoint_vertices.len(), 2);
+        assert!(endpoint_vertices.iter().all(|vertex| vertex.0 >= 1_000_000));
+        assert_ne!(endpoint_vertices[0], endpoint_vertices[1]);
+    }
+
+    #[test]
+    fn pave_sorting_reuses_existing_generated_endpoint_ids_on_rebuild() {
+        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
+        let edge = line_edge(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+        );
+
+        ds.rebuild_paves_for_edges(&[(EdgeId(4), edge.clone())]);
+        let first_vertices: Vec<VertexId> = ds
+            .paves_for_edge(EdgeId(4))
+            .into_iter()
+            .map(|pave| pave.vertex)
+            .collect();
+
+        ds.rebuild_paves_for_edges(&[(EdgeId(4), edge)]);
+        let second_vertices: Vec<VertexId> = ds
+            .paves_for_edge(EdgeId(4))
+            .into_iter()
+            .map(|pave| pave.vertex)
+            .collect();
+
+        assert_eq!(first_vertices, second_vertices);
+        assert!(second_vertices.iter().all(|vertex| vertex.0 >= 1_000_000));
     }
 
     #[test]
