@@ -3,7 +3,7 @@
 use crate::{EdgeId, FaceId, VertexId};
 
 /// Vertex-vertex interference
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VVInterference {
     /// First vertex
     pub vertex1: VertexId,
@@ -12,7 +12,7 @@ pub struct VVInterference {
 }
 
 /// Vertex-edge interference
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VEInterference {
     /// Vertex
     pub vertex: VertexId,
@@ -23,7 +23,7 @@ pub struct VEInterference {
 }
 
 /// Edge-edge interference
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EEInterference {
     /// First edge
     pub edge1: EdgeId,
@@ -32,7 +32,7 @@ pub struct EEInterference {
 }
 
 /// Face-face interference
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FFInterference {
     /// First face
     pub face1: FaceId,
@@ -51,4 +51,31 @@ pub struct InterferenceTable {
     pub ee: Vec<EEInterference>,
     /// Face-face interferences
     pub ff: Vec<FFInterference>,
+}
+
+impl InterferenceTable {
+    /// Store a vertex-vertex interference.
+    pub fn push_vv(&mut self, interference: VVInterference) {
+        self.vv.push(interference);
+    }
+
+    /// Borrow all vertex-vertex interferences.
+    pub fn vv(&self) -> &[VVInterference] {
+        &self.vv
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stores_vv_interference_records() {
+        let mut table = InterferenceTable::default();
+        let interference = VVInterference { vertex1: VertexId(1), vertex2: VertexId(2) };
+
+        table.push_vv(interference);
+
+        assert_eq!(table.vv(), &[interference]);
+    }
 }

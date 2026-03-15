@@ -9,6 +9,7 @@ mod pave;
 mod pave_block;
 mod shape_info;
 
+pub use interference::{InterferenceTable, VVInterference};
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
 };
@@ -25,6 +26,7 @@ pub struct BopDs {
     vertex_to_shape: FxHashMap<VertexId, ShapeId>,
     edge_to_shape: FxHashMap<EdgeId, ShapeId>,
     face_to_shape: FxHashMap<FaceId, ShapeId>,
+    interferences: InterferenceTable,
 }
 
 impl BopDs {
@@ -36,7 +38,21 @@ impl BopDs {
             vertex_to_shape: FxHashMap::default(),
             edge_to_shape: FxHashMap::default(),
             face_to_shape: FxHashMap::default(),
+            interferences: InterferenceTable::default(),
         }
+    }
+
+    /// Create new BopDs with explicit options.
+    pub fn with_options(options: BopOptions) -> Self {
+        Self {
+            options,
+            ..Self::new()
+        }
+    }
+
+    /// Borrow the configured options.
+    pub fn options(&self) -> &BopOptions {
+        &self.options
     }
 
     /// Register vertex source
@@ -97,6 +113,16 @@ impl BopDs {
     pub fn shape_info(&self, shape_id: ShapeId) -> Option<&ShapeInfo> {
         self.shapes.get(shape_id.0 as usize)
     }
+
+    /// Store a vertex-vertex interference.
+    pub fn push_vv_interference(&mut self, interference: VVInterference) {
+        self.interferences.push_vv(interference);
+    }
+
+    /// Borrow all stored vertex-vertex interferences.
+    pub fn vv_interferences(&self) -> &[VVInterference] {
+        self.interferences.vv()
+    }
 }
 
 #[cfg(test)]
@@ -122,5 +148,15 @@ mod tests {
         let shape_id = ds.face_shape_id(face).unwrap();
         let info = ds.shape_info(shape_id).unwrap();
         assert!(info.is_source);
+    }
+
+    #[test]
+    fn stores_vv_interference_records() {
+        let mut ds = BopDs::new();
+        let interference = VVInterference { vertex1: VertexId(0), vertex2: VertexId(1) };
+
+        ds.push_vv_interference(interference);
+
+        assert_eq!(ds.vv_interferences(), &[interference]);
     }
 }
