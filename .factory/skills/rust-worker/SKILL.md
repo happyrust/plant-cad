@@ -29,7 +29,7 @@ Use for implementing Rust library features:
 
 3. **Verify**
    - Run `cargo test -p truck-bop` (all tests must pass)
-   - Run `cargo clippy -p truck-bop` (no warnings)
+   - Run `cargo clippy -p truck-bop` if not blocked by known workspace issues (see AGENTS.md)
    - Manually verify BopDs queries if applicable
 
 4. **Commit**
