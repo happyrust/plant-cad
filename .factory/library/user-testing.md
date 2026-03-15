@@ -30,3 +30,11 @@ Testing surface and validation approach for truck-bop.
 - Each test process: ~200MB RAM, 1-2 CPU cores
 - Total for 5 concurrent: ~1GB RAM, 5-10 cores
 - Well within machine capacity
+
+## Flow Validator Guidance: cli
+
+- Stay on the CLI surface; validate behavior through `cargo test` and `cargo check` only.
+- Do not modify source files or workspace configuration during flow validation.
+- Prefer `cargo test -p truck-bop -- --list` first when exact unit test names are unclear, then rerun with fully-qualified names and `--exact`.
+- Write evidence only under the assigned mission evidence directory and flow report path.
+- Treat cargo warning noise as non-blocking unless it changes command exit status or masks assertion-specific failures.

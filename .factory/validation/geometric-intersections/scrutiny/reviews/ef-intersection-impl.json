@@ -1,34 +1,39 @@
 {
   "featureId": "ef-intersection-impl",
-  "reviewedAt": "2026-03-15T15:31:54.966988+00:00",
+  "reviewedAt": "2026-03-15T16:03:48Z",
   "commitId": "7d32de94",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The implementation stores EF records and passes the targeted tests, but it does not satisfy the feature contract for general edge-face intersections. The face-bound check assumes the face's UV coordinates are the 3D x/y coordinates of boundary vertices, and the tests were narrowed to plane/line cases after the worker could not make curved crossings converge.",
+    "summary": "The EF implementation stores results in BopDs and covers simple axis-aligned planar cases, but it does not satisfy the feature contract for trimmed faces with holes or for a single edge crossing the same face multiple times.",
     "issues": [
       {
         "file": "truck-bop/src/intersect/ef.rs",
-        "line": 193,
+        "line": 200,
         "severity": "blocking",
-        "description": "`point_projects_inside_face` builds a 2D polygon from `vertex.point().x`/`.y`, but face boundaries are stored in model-space 3D points, not in the surface's parameter space. For any rotated plane or non-planar face, valid `(u, v)` hits are tested against an unrelated XY polygon and can be falsely rejected or accepted, so the algorithm does not correctly check whether the projected point lies within face bounds."
+        "description": "Face containment is incorrect for trimmed faces with inner loops. `point_projects_inside_face` requires the projected UV to be inside every boundary wire (`all(...)`), which rejects any point inside the outer boundary but outside a hole. The architecture notes explicitly say containment must use outer-minus-holes logic, so EF intersections on valid trimmed regions will be dropped."
       },
       {
         "file": "truck-bop/src/intersect/ef.rs",
         "line": 334,
         "severity": "blocking",
-        "description": "The feature requires handling multiple intersections on a single curve and graceful tangent cases, but the final tests only cover separate straight edges crossing a plane and a line starting on a plane. The worker transcript explicitly notes that curved crossings were not being found and then simplifies the tests to line edges only, leaving the promised general curve behavior unverified and likely unsupported."
+        "description": "The tests do not verify the required behavior that one curve can cross the same face multiple times. `ef_intersection_handles_multiple_curve_crossings` uses two separate straight edges against one planar face, and the implementation itself is documented as missing rotated/non-planar cases. Because the worker simplified away the curved single-edge scenario from the transcript, the feature requirement `curve crosses face multiple times` remains unproven and likely unsupported."
       }
     ]
   },
   "sharedStateObservations": [
     {
+      "area": "conventions",
+      "observation": "The EF worker violated the documented trimmed-face containment rule by checking that every boundary contains the UV point, indicating the guidance in AGENTS/library was not followed or not prominent enough during implementation.",
+      "evidence": "`truck-bop/src/intersect/ef.rs:200` uses `face.boundaries().into_iter().all(...)`, while `.factory/library/architecture.md` says trimmed-face containment must use outer-minus-holes logic and `AGENTS.md:62` already documents EF containment limitations."
+    },
+    {
       "area": "skills",
-      "observation": "The `rust-bop-worker` skill still mandates a clean `cargo clippy -p truck-bop` run, but mission guidance and `.factory/services.yaml` already document that clippy is intentionally skipped because of pre-existing failures in other workspace crates.",
-      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` step 4 says to run and address `cargo clippy -p truck-bop`; `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` marks clippy failures outside scope, and `/Volumes/DPC/work/cad/truck-new/.factory/services.yaml` sets `lint` to `echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"`."
+      "observation": "The rust-bop worker skill's TDD guidance was not followed for the mission-critical multi-crossing behavior: the transcript shows the worker removed the curved-crossing case and ended with tests that only cover multiple candidate pairs, so the skill may need stronger emphasis on preserving expected-behavior coverage instead of simplifying tests to fit the implementation.",
+      "evidence": "Transcript for session `c296b96a-5c25-455d-9a65-c5644b44f4ea` states, 'I\u2019m changing the tangent test to a non-degenerate edge...' and earlier, 'I\u2019m simplifying the tests to exercise the required behavior with line edges only'; final test `truck-bop/src/intersect/ef.rs:334` uses two separate edges even though `features.json:595` requires a curve that crosses the face multiple times."
     }
   ],
   "addressesFailureFrom": null,
-  "summary": "Reviewed commit `7d32de94` and the worker transcript/handoff for `ef-intersection-impl`. The feature should fail scrutiny: boundary inclusion is computed in world XY instead of the face's UV space, and the final test coverage was narrowed after curved/tangent cases failed, so the implementation does not convincingly meet the edge-face feature contract beyond simple plane/line cases."
+  "summary": "Reviewed handoff `7d32de94`, the transcript skeleton, and the EF diff. The feature fails scrutiny because face-bound checking is wrong for trimmed faces with holes, and the implementation/tests do not demonstrate the required single-edge multi-crossing behavior."
 }

@@ -1,51 +1,45 @@
 {
   "featureId": "ee-intersection-impl",
-  "reviewedAt": "2026-03-15T15:30:00Z",
+  "reviewedAt": "2026-03-15T16:04:37.485094Z",
   "commitId": "58011a4f1c6262aeae8bc316ccc2572b43af73d9",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The EE feature adds a bounded curve-curve intersection routine with line-segment coverage, but it does not yet satisfy the feature contract for multiple intersections or persistence of EE interference parameters in `BopDs`.",
+    "summary": "The implementation covers a single curve-curve hit for simple line segments, but it does not satisfy the feature requirements for multiple intersections and does not store EE interference records in BopDs as required by the feature description.",
     "issues": [
       {
         "file": "truck-bop/src/intersect/ee.rs",
         "line": 34,
         "severity": "blocking",
-        "description": "`intersect_ee` returns immediately after the first Newton-refined hit, so it can never report additional valid intersections for the same edge pair. That violates the feature's expected behavior for multiple intersections such as circle-circle or other multi-hit curves."
+        "description": "`intersect_ee` returns immediately after the first Newton-refined hit, so any additional intersections on the same pair of edges are never searched. This violates the feature requirement to handle multiple intersections such as circle-circle cases and prevents complete EE results for multi-hit curves."
       },
       {
         "file": "truck-bop/src/intersect/ee.rs",
-        "line": 93,
+        "line": 97,
         "severity": "blocking",
-        "description": "The test suite only covers line-segment cases and parameter bounds; it does not include any multi-intersection curved case despite the feature requirement calling out cases like circle-circle. As written, the implementation's sampled fallback is unproven for the core non-linear behavior the feature claims to support."
+        "description": "The test coverage never exercises curved or multi-hit edges despite the feature explicitly requiring support for multiple intersections (e.g. circle-circle). With only straight-segment tests, the current implementation's early-return behavior and sampling limitations go undetected."
       },
       {
-        "file": "truck-bop/src/bopds/interference.rs",
-        "line": 38,
+        "file": "truck-bop/src/intersect/ee.rs",
+        "line": 13,
         "severity": "blocking",
-        "description": "`EEInterference` stores only the two edge IDs, with no fields for the intersection parameters on either curve. The feature contract explicitly requires storing parameters for both curves, so the data model cannot represent the required result."
-      },
-      {
-        "file": "truck-bop/src/bopds/mod.rs",
-        "line": 12,
-        "severity": "blocking",
-        "description": "`BopDs` exports no EE interference API and has no `push_ee_interference`/`ee_interferences` accessors, so the feature still does not persist EE interferences into the shared boolean-operation data structure. This matches the worker handoff note that EE storage was left unwired."
+        "description": "The EE routine only returns tuples and never persists `EEInterference` entries into `BopDs`, even though the feature description requires storing intersection parameters for both curves and the crate already provides `BopDs::push_ee_interference`."
       }
     ]
   },
   "sharedStateObservations": [
     {
       "area": "skills",
-      "observation": "The `rust-bop-worker` skill still instructs workers to run `cargo clippy -p truck-bop` and address warnings, but mission guidance and `.factory/services.yaml` already document that clippy is intentionally skipped because of pre-existing workspace issues outside `truck-bop`.",
-      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` step 4 says to run clippy and address warnings; `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` and `/Volumes/DPC/work/cad/truck-new/.factory/services.yaml` both note clippy is known-broken / skipped."
+      "observation": "The `rust-bop-worker` skill still instructs workers to run `cargo clippy -p truck-bop` and address warnings, but this mission documents that clippy is intentionally skipped because of pre-existing failures in other workspace crates.",
+      "evidence": ".factory/skills/rust-bop-worker/SKILL.md step 4 requires `cargo clippy -p truck-bop`; `/Volumes/DPC/work/cad/truck-new/.factory/services.yaml` now maps `lint` to `echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"`; mission `AGENTS.md` also says clippy may fail outside mission scope."
     },
     {
-      "area": "architecture",
-      "observation": "The shared architecture note says interference tables track `EE` records, but it does not spell out that EE records must include both edge parameters. That omission likely contributed to adding an `EEInterference` type that cannot store the required parametric data.",
-      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/library/architecture.md` lists EE interference tables generically, while `/Volumes/DPC/work/cad/truck-new/truck-bop/src/bopds/interference.rs:38` defines `EEInterference` with only `edge1` and `edge2`."
+      "area": "knowledge",
+      "observation": "The shared architecture docs do not record the EE limitation that this implementation only finds a single hit for curved edge pairs, even though the worker's handoff explicitly called out the missing BopDs storage and the mission had to add a later fix feature for EE multi-intersection.",
+      "evidence": "Worker handoff `2026-03-15T15-18-31-128Z__ee-intersection-impl__e2feea8c-e1d0-44d6-9ced-ecc3e7ac5a20.json` notes EE storage was not wired; `/Volumes/DPC/work/cad/truck-new/.factory/library/architecture.md` has no EE-specific limitation note, while mission `AGENTS.md` separately documents `EE multi-intersection` as a deferred limitation."
     }
   ],
   "addressesFailureFrom": null,
-  "summary": "Reviewed commit `58011a4f1c6262aeae8bc316ccc2572b43af73d9`, the worker handoff, transcript skeleton, and current EE-related source. The implementation covers basic line-segment hits and no-hit cases, but it still fails the feature contract because it returns at most one intersection, lacks curved multi-hit test coverage, and does not persist EE intersection parameters in `BopDs`."
+  "summary": "Reviewed the feature transcript, handoff, skill guidance, and commit `58011a4f1c6262aeae8bc316ccc2572b43af73d9`. The implementation is incomplete for the assigned feature: it only proves simple single-hit line cases, returns after the first refined hit, and does not persist EE interference records into `BopDs`, so the feature should fail scrutiny."
 }

@@ -1,33 +1,33 @@
 {
   "featureId": "vf-intersection-impl",
-  "reviewedAt": "2026-03-15T15:30:36.575066+00:00",
+  "reviewedAt": "2026-03-15T16:03:32Z",
   "commitId": "e8a5890a",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The VF feature adds storage and a surface-projection based detector, but the face-bounds check is incorrect for trimmed faces with inner loops because it accepts points inside holes.",
+    "summary": "The implementation stores VF interferences and correctly enforces geometric tolerance, but its trimmed-face containment check is incorrect for faces with holes because it requires the projected point to be inside every boundary wire.",
     "issues": [
       {
         "file": "truck-bop/src/intersect/vf.rs",
-        "line": 68,
+        "line": 75,
         "severity": "blocking",
-        "description": "The trimmed-face containment test uses `face.boundaries().into_iter().all(...)`, so any point inside an inner boundary (hole) is incorrectly accepted because being inside the outer loop and inside the hole makes every boundary predicate true. VF intersections will therefore be recorded for vertices lying in void regions of faces, violating the requirement to verify the projection is within the actual face bounds."
+        "description": "`point_projects_inside_face` uses `face.boundaries().into_iter().all(...)`, which rejects every point on a trimmed face that contains inner loops. `Face::boundaries()` returns all oriented boundary wires, including holes, so a valid point must be inside the outer loop and outside inner loops rather than inside all loops. This breaks the required face-bounds check for any face with holes."
       }
     ]
   },
   "sharedStateObservations": [
     {
-      "area": "knowledge",
-      "observation": "For Truck topology faces, `Face::boundaries()` returns all boundary wires with face orientation applied, including inner loops. Containment for trimmed faces therefore needs outer-minus-holes logic rather than checking every boundary with `all(...)`.",
-      "evidence": "Current implementation: `truck-bop/src/intersect/vf.rs:68`; face API docs show multiple boundaries and orientation behavior in `truck-topology/src/face.rs:101` and `truck-topology/src/face.rs:1076`."
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still requires `cargo clippy -p truck-bop` to pass even though mission guidance and `.factory/services.yaml` document that clippy is skipped because of known out-of-scope workspace failures.",
+      "evidence": ".factory/skills/rust-bop-worker/SKILL.md:35-40 requires clippy cleanup, while `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` and `.factory/services.yaml` say clippy may fail or is skipped for this mission."
     },
     {
-      "area": "skills",
-      "observation": "The `rust-bop-worker` skill requires `cargo clippy -p truck-bop` in the verification step, but mission guidance and services already document that clippy may fail due to pre-existing out-of-scope workspace issues. The skill should explicitly call out this known exception so workers do not appear to deviate when they correctly stop at that boundary.",
-      "evidence": "Skill requirement in `.factory/skills/rust-bop-worker/SKILL.md`; documented exception in mission `AGENTS.md` and `.factory/services.yaml` lint command override."
+      "area": "knowledge",
+      "observation": "The worker had to infer trimmed-face containment semantics from `Face::boundaries()`, but that rule was not yet captured in shared library knowledge at the time of implementation.",
+      "evidence": "The transcript shows repeated inspection of `truck-topology/src/face.rs` before implementing containment, and `truck-topology/src/face.rs:101-106` shows `boundaries()` returns all oriented wires. This project knowledge is now recorded in `.factory/library/architecture.md`."
     }
   ],
   "addressesFailureFrom": null,
-  "summary": "Reviewed the VF transcript skeleton, handoff, commit `e8a5890a`, and current `truck-bop` sources. Found one blocking correctness issue: the face-boundary test treats holes as valid interior, so VF interferences can be stored for points projected into trimmed-out regions."
+  "summary": "Reviewed handoff, transcript skeleton, skill, and commit `e8a5890a`. The feature meets storage and tolerance requirements, but the bounds check is wrong for trimmed faces with holes, so the review fails with one blocking issue."
 }

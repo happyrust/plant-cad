@@ -1,7 +1,7 @@
 {
   "milestone": "pave-splitting",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -21,40 +21,32 @@
   },
   "reviewsSummary": {
     "total": 2,
-    "passed": 0,
-    "failed": 2,
-    "failedFeatures": [
-      "pave-sorting-dedup",
-      "paveblock-creation"
-    ]
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "pave-sorting-dedup",
-      "severity": "blocking",
-      "description": "`truck-bop/src/bopds/mod.rs:286` synthesizes endpoint paves with hard-coded `VertexId(u32::MAX - 1)` / `VertexId(u32::MAX)` instead of allocated generated IDs, so endpoint paves can alias unrelated vertices and are unsafe as stable topology references."
-    },
-    {
-      "featureId": "paveblock-creation",
-      "severity": "blocking",
-      "description": "`truck-bop/src/bopds/pave_block.rs:29` normalizes only the numeric parameter range in `PaveBlock::from_pave_pair` without reordering `start_vertex`/`end_vertex`, so a descending pave pair can produce a block whose vertices do not match its stored `(min, max)` range."
-    }
-  ],
+  "blockingIssues": [],
   "appliedUpdates": [
     {
       "target": "library",
       "description": "Documented that synthetic pave endpoints must allocate generated vertex IDs via `BopDs::next_generated_vertex_id()` rather than fixed sentinel IDs.",
-      "sourceFeature": "pave-sorting-dedup"
+      "sourceFeature": "fix-pave-endpoint-vertex-ids"
     }
   ],
   "suggestedGuidanceUpdates": [
     {
       "target": "skills",
-      "suggestion": "Update `rust-bop-worker` verification guidance to explicitly allow mission-documented exceptions where full-crate `cargo test -p truck-bop` or `cargo clippy -p truck-bop` are known noisy or blocked by unrelated baseline issues, and direct workers to run the feature-specific checks plus `cargo check -p truck-bop` instead.",
-      "evidence": "Both `pave-sorting-dedup` and `paveblock-creation` reviews reported that the current skill requires unconditional full-crate test/clippy success, while mission `AGENTS.md` already documents known out-of-scope failures/noise and both workers had to record the same deviation.",
+      "suggestion": "Update `rust-bop-worker` guidance for targeted Rust tests to warn that `cargo test -p truck-bop <name> -- --exact` can match 0 tests for module-scoped unit tests; require checking matched-test counts and using module-qualified paths or broader filters when needed.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` Step 2 recommends `cargo test -p truck-bop <test_name> -- --exact`; the fix handoff/transcript for worker `2343890c-5bb0-4ef0-8b3c-8060ca52a241` records `pave_sorting_allocates_generated_vertex_ids_for_missing_endpoints -- --exact` and `pave_sorting_reuses_existing_generated_endpoint_ids_on_rebuild -- --exact` both running 0 tests.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Update `rust-bop-worker` guidance for targeted Rust tests to warn that `cargo test -p truck-bop <name> -- --exact` can match 0 tests for module-scoped unit tests; require checking matched-test counts and using module-qualified paths or broader filters when needed.",
+      "evidence": "`.factory/skills/rust-bop-worker/SKILL.md` says to run `cargo test -p truck-bop <test_name> -- --exact`; the fix handoff for session `1bf7b55a-4b40-454a-9efd-eda1cb23b083` records `cargo test -p truck-bop pave_block_reorders_vertices_with_parameters -- --exact` and `cargo test -p truck-bop paveblock_creation_reorders_reversed_pave_pair_vertices -- --exact` both matching 0 tests before the broader `cargo test -p truck-bop paveblock_` run exercised the regressions.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [],
-  "previousRound": null
+  "previousRound": ".factory/validation/pave-splitting/scrutiny/synthesis.json"
 }
