@@ -23,8 +23,13 @@ impl PaveBlock {
     /// Create a pave block from consecutive paves on the same edge.
     pub fn from_pave_pair(start: Pave, end: Pave, parametric_tol: f64) -> Self {
         debug_assert_eq!(start.edge, end.edge);
-        let start_parameter = start.parameter.min(end.parameter);
-        let end_parameter = start.parameter.max(end.parameter);
+        let (start, end) = if start.parameter <= end.parameter {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let start_parameter = start.parameter;
+        let end_parameter = end.parameter;
         Self {
             original_edge: start.edge,
             start_vertex: start.vertex,
@@ -58,5 +63,27 @@ mod tests {
 
         assert!(block.unsplittable);
         assert_eq!(block.param_range, (0.5, 0.500000005));
+    }
+
+    #[test]
+    fn pave_block_reorders_vertices_with_parameters() {
+        let higher = Pave {
+            edge: EdgeId(7),
+            vertex: VertexId(70),
+            parameter: 0.8,
+            tolerance: 1.0e-6,
+        };
+        let lower = Pave {
+            edge: EdgeId(7),
+            vertex: VertexId(71),
+            parameter: 0.2,
+            tolerance: 1.0e-6,
+        };
+
+        let block = PaveBlock::from_pave_pair(higher, lower, 1.0e-8);
+
+        assert_eq!(block.start_vertex, VertexId(71));
+        assert_eq!(block.end_vertex, VertexId(70));
+        assert_eq!(block.param_range, (0.2, 0.8));
     }
 }

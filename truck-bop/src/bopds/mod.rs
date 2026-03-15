@@ -547,6 +547,22 @@ mod tests {
     }
 
     #[test]
+    fn paveblock_creation_reorders_reversed_pave_pair_vertices() {
+        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
+
+        ds.push_pave(Pave::new(EdgeId(4), VertexId(41), 0.8, 1.0e-8).unwrap());
+        ds.push_pave(Pave::new(EdgeId(4), VertexId(40), 0.2, 1.0e-8).unwrap());
+
+        ds.pave_blocks.clear();
+        ds.pave_blocks.push(PaveBlock::from_pave_pair(ds.paves[0], ds.paves[1], ds.options.parametric_tol));
+
+        let block = ds.pave_blocks_for_edge(EdgeId(4))[0];
+        assert_eq!(block.start_vertex, VertexId(40));
+        assert_eq!(block.end_vertex, VertexId(41));
+        assert_eq!(block.param_range, (0.2, 0.8));
+    }
+
+    #[test]
     fn paveblock_micro_segment_marks_unsplittable() {
         let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-4, ..BopOptions::default() });
         let edge = line_edge(
