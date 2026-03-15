@@ -1,6 +1,6 @@
 {
   "milestone": "broad-phase-and-vv-ve",
-  "round": 2,
+  "round": 3,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -20,26 +20,61 @@
     }
   },
   "reviewsSummary": {
-    "total": 4,
-    "passed": 4,
-    "failed": 0,
-    "failedFeatures": []
+    "total": 6,
+    "passed": 1,
+    "failed": 5,
+    "failedFeatures": [
+      "bounding-box-providers",
+      "broad-phase-candidate-generation",
+      "vv-intersection",
+      "ve-intersection",
+      "fix-face-bounding-box"
+    ]
   },
-  "blockingIssues": [],
-  "overrideNote": "Orchestrator override: Clippy blocked by pre-existing workspace issues in truck-topology and truck-polymesh (documented in AGENTS.md). All code reviews pass. Tests and typecheck pass. Accepting milestone with lint validator red.",
+  "blockingIssues": [
+    {
+      "featureId": "bounding-box-providers",
+      "severity": "blocking",
+      "description": "`truck-bop/src/bounding.rs:39` in commit `ddb444cf9a57b7a024e91cf96d28b0e3a8eb48bb` bounds faces from boundary curves only, which can under-bound bounded surfaces with interior extrema; `truck-bop/src/bounding.rs:140` also lacks a regression that exercises actual surface coverage."
+    },
+    {
+      "featureId": "broad-phase-candidate-generation",
+      "severity": "blocking",
+      "description": "`truck-bop/src/broad_phase.rs:61` in commit `1405e0be` ignores `operand_rank` when generating BopDs-backed candidate pairs, so same-operand entities can be paired and sent to downstream intersection passes."
+    },
+    {
+      "featureId": "vv-intersection",
+      "severity": "blocking",
+      "description": "`truck-bop/src/intersect/vv.rs:10` in commit `55148ecf` requires an external vertex slice instead of using BopDs-registered geometry, leaving VV narrow phase disconnected from the BopDs-backed broad-phase workflow."
+    },
+    {
+      "featureId": "ve-intersection",
+      "severity": "blocking",
+      "description": "`truck-bop/src/intersect/ve.rs:23` in commit `73892e27` stores duplicate paves and VE interferences for repeated candidate pairs and lacks regression coverage for idempotent insertion."
+    },
+    {
+      "featureId": "fix-face-bounding-box",
+      "severity": "blocking",
+      "description": "`truck-bop/src/bounding.rs:202` in commit `3d2f74d3` removes the protruding-interior regression without replacing it with a valid non-planar regression, so the reported face-bounds failure mode remains unproven."
+    }
+  ],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
       "target": "skills",
-      "suggestion": "Update the `rust-worker` skill to explicitly allow mission-level exceptions when known workspace clippy failures block verification and when tightly coupled new modules or targeted fix work require tests to land alongside implementation instead of a strict red-first step.",
-      "evidence": "The `ve-intersection`, `fix-face-bounding-box`, and `fix-broad-phase-bopds-integration` reviews all report justified deviations from `.factory/skills/rust-worker/SKILL.md` because mission guidance already permits clippy skips for known workspace issues and some small fix/refactor flows added or adjusted tests alongside implementation.",
+      "suggestion": "Clarify in `.factory/skills/rust-worker/SKILL.md` that tests-first remains the default, but workers may introduce small helper scaffolding or replacement regressions in the same change when a strict red-first sequence is impractical or an existing red test is invalid, provided they document the deviation in handoff.",
+      "evidence": "The reviews for `bounding-box-providers`, `ve-intersection`, `fix-face-bounding-box`, and `fix-broad-phase-bopds-integration` all cite justified deviations from the current strict wording in `.factory/skills/rust-worker/SKILL.md`, and the handoffs already capture those deviations explicitly.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [
     {
-      "observation": "The shared library does not document that broad-phase face bounds now depend on the `FaceBoundingSurface` abstraction and require surface-bearing face payloads to capture protruding interiors, while `Face<..., ()>` still falls back to boundary sampling.",
-      "reason": "ambiguous and too implementation-specific for a general shared library entry without orchestrator guidance"
+      "observation": "Document in `.factory/library/architecture.md` that narrow-phase geometry must come from BopDs rather than side tables.",
+      "reason": "recommend to orchestrator instead; the current architecture note is too high-level to update confidently without a broader design decision about BopDs ownership of geometry."
+    },
+    {
+      "observation": "Document in `.factory/library/architecture.md` that broad phase must filter same-operand pairs by `operand_rank`.",
+      "reason": "recommend to orchestrator instead; this is a normative boolean-operation rule, not just a factual low-risk note."
     }
   ],
   "previousRound": ".factory/validation/broad-phase-and-vv-ve/scrutiny/synthesis.json"
