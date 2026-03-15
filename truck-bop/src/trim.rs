@@ -184,12 +184,24 @@ fn classify_loops(loops: &mut [TrimmingLoop]) {
     for (index, trimming_loop) in loops.iter_mut().enumerate() {
         trimming_loop.is_outer = index == outer_index;
         if outer_sign != 0.0 && trimming_loop.signed_area.signum() == outer_sign {
-            trimming_loop.uv_points.reverse();
-            for edge in &mut trimming_loop.edges {
-                edge.uv_points.reverse();
-            }
+            reverse_trimming_loop(trimming_loop, outer_index == index);
             trimming_loop.signed_area = -trimming_loop.signed_area;
         }
+    }
+}
+
+fn reverse_trimming_loop(trimming_loop: &mut TrimmingLoop, is_closed: bool) {
+    trimming_loop.uv_points.reverse();
+    trimming_loop.edges.reverse();
+    for edge in &mut trimming_loop.edges {
+        edge.uv_points.reverse();
+    }
+
+    if is_closed {
+        trimming_loop.uv_points = close_polyline(
+            trimming_loop.uv_points.clone(),
+            f64::EPSILON,
+        );
     }
 }
 
@@ -333,6 +345,50 @@ mod tests {
         assert!(outer.signed_area.abs() > inner.signed_area.abs());
         assert!(outer.edges.iter().all(|edge| edge.section_curve.is_none()));
         assert!(inner.edges.iter().all(|edge| edge.section_curve.is_none()));
+    }
+
+    #[test]
+    fn trimming_loop_reversal_preserves_closed_polyline_and_edge_connectivity() {
+        let mut loop_record = TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![
+                TrimmingEdge {
+                    section_curve: Some(SectionCurveId(1)),
+                    uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
+                },
+                TrimmingEdge {
+                    section_curve: Some(SectionCurveId(2)),
+                    uv_points: vec![Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)],
+                },
+                TrimmingEdge {
+                    section_curve: Some(SectionCurveId(3)),
+                    uv_points: vec![Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)],
+                },
+                TrimmingEdge {
+                    section_curve: Some(SectionCurveId(4)),
+                    uv_points: vec![Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)],
+                },
+            ],
+            signed_area: 1.0,
+            uv_points: vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(1.0, 0.0),
+                Point2::new(1.0, 1.0),
+                Point2::new(0.0, 1.0),
+                Point2::new(0.0, 0.0),
+            ],
+            is_outer: false,
+        };
+
+        reverse_trimming_loop(&mut loop_record, true);
+
+        assert_eq!(loop_record.uv_points.first(), loop_record.uv_points.last());
+        assert_eq!(loop_record.edges[0].section_curve, Some(SectionCurveId(4)));
+        assert_eq!(loop_record.edges[0].uv_points, vec![Point2::new(0.0, 0.0), Point2::new(0.0, 1.0)]);
+        assert_eq!(loop_record.edges[1].uv_points[0], loop_record.edges[0].uv_points[1]);
+        assert_eq!(loop_record.edges[2].uv_points[0], loop_record.edges[1].uv_points[1]);
+        assert_eq!(loop_record.edges[3].uv_points[0], loop_record.edges[2].uv_points[1]);
+        assert_eq!(loop_record.edges[3].uv_points[1], loop_record.edges[0].uv_points[0]);
     }
 
     #[test]
