@@ -25,7 +25,7 @@ pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use bopds::{BopDs, CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use broad_phase::{CandidatePairs, generate_candidate_pairs, generate_candidate_pairs_from_bopds};
 pub use error::BopError;
-pub use intersect::{intersect_ee, intersect_ef, intersect_ve, intersect_vf, intersect_vv};
+pub use intersect::{intersect_ee, intersect_ef, intersect_ff, intersect_ve, intersect_vf, intersect_vv};
 pub use options::BopOptions;
 pub use pipeline::BooleanOp;
 

@@ -9,7 +9,10 @@ mod pave;
 mod pave_block;
 pub(crate) mod shape_info;
 
-pub use interference::{EEInterference, EFInterference, InterferenceTable, VEInterference, VFInterference, VVInterference};
+pub use interference::{
+    EEInterference, EFInterference, FFInterference, InterferenceTable, SectionCurve,
+    VEInterference, VFInterference, VVInterference,
+};
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
 };
@@ -29,6 +32,8 @@ pub struct BopDs {
     face_to_shape: FxHashMap<FaceId, ShapeId>,
     interferences: InterferenceTable,
     paves: Vec<Pave>,
+    next_section_curve_id: u32,
+    next_generated_vertex_id: u32,
 }
 
 impl BopDs {
@@ -42,6 +47,8 @@ impl BopDs {
             face_to_shape: FxHashMap::default(),
             interferences: InterferenceTable::default(),
             paves: Vec::new(),
+            next_section_curve_id: 0,
+            next_generated_vertex_id: 1_000_000,
         }
     }
 
@@ -157,6 +164,30 @@ impl BopDs {
         self.interferences.push_ef(interference);
     }
 
+    /// Store a face-face interference.
+    pub fn push_ff_interference(&mut self, interference: FFInterference) {
+        self.interferences.push_ff(interference);
+    }
+
+    /// Allocate a fresh section curve identifier.
+    pub fn next_section_curve_id(&mut self) -> SectionCurveId {
+        let id = SectionCurveId(self.next_section_curve_id);
+        self.next_section_curve_id += 1;
+        id
+    }
+
+    /// Allocate a generated vertex identifier for synthesized section endpoints.
+    pub fn next_generated_vertex_id(&mut self) -> VertexId {
+        let id = VertexId(self.next_generated_vertex_id);
+        self.next_generated_vertex_id += 1;
+        id
+    }
+
+    /// Store a section curve.
+    pub fn push_section_curve(&mut self, section_curve: SectionCurve) {
+        self.interferences.push_section_curve(section_curve);
+    }
+
     /// Store a pave.
     pub fn push_pave(&mut self, pave: Pave) {
         self.paves.push(pave);
@@ -185,6 +216,16 @@ impl BopDs {
     /// Borrow all stored edge-face interferences.
     pub fn ef_interferences(&self) -> &[EFInterference] {
         self.interferences.ef()
+    }
+
+    /// Borrow all stored face-face interferences.
+    pub fn ff_interferences(&self) -> &[FFInterference] {
+        self.interferences.ff()
+    }
+
+    /// Borrow all stored section curves.
+    pub fn section_curves(&self) -> &[SectionCurve] {
+        self.interferences.section_curves()
     }
 
     /// Borrow all stored paves.
@@ -287,5 +328,29 @@ mod tests {
         ds.push_ef_interference(interference);
 
         assert_eq!(ds.ef_interferences(), &[interference]);
+    }
+
+    #[test]
+    fn stores_ff_interference_records_and_section_curves() {
+        let mut ds = BopDs::new();
+        let curve_id = ds.next_section_curve_id();
+        let section_curve = SectionCurve {
+            id: curve_id,
+            faces: (FaceId(0), FaceId(1)),
+            start: VertexId(100),
+            end: VertexId(101),
+            samples: vec![truck_base::cgmath64::Point3::new(0.0, 0.0, 0.0)],
+        };
+        let interference = FFInterference {
+            face1: FaceId(0),
+            face2: FaceId(1),
+            section_curve: curve_id,
+        };
+
+        ds.push_section_curve(section_curve.clone());
+        ds.push_ff_interference(interference);
+
+        assert_eq!(ds.section_curves(), &[section_curve]);
+        assert_eq!(ds.ff_interferences(), &[interference]);
     }
 }

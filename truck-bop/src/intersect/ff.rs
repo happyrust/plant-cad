@@ -1,0 +1,395 @@
+//! Face-Face intersection detection.
+
+use crate::{bopds::FFInterference, bopds::SectionCurve, BopDs, FaceId, VertexId};
+use truck_base::{cgmath64::{MetricSpace, Point3}, tolerance::Tolerance};
+use truck_meshalgo::analyzers::Collision;
+use truck_meshalgo::prelude::RobustMeshableShape;
+use truck_modeling::{builder, Curve, Surface, BSplineCurve, IntersectionCurve, KnotVec};
+use truck_topology::{Edge, Face, Shell};
+
+const SEARCH_PARAMETER_TRIALS: usize = 100;
+
+/// Detects face-face interferences and stores generated section curves in `BopDs`.
+pub fn intersect_ff(
+    bopds: &mut BopDs,
+    faces: &[(FaceId, Face<Point3, Curve, Surface>)],
+    candidates: &[(FaceId, FaceId)],
+) -> usize {
+    let tolerance = bopds.options().geometric_tol.max(bopds.options().approximation_tol);
+    let mut count = 0;
+
+    for &(face1_id, face2_id) in candidates {
+        let Some(face1) = face_by_id(faces, face1_id) else {
+            continue;
+        };
+        let Some(face2) = face_by_id(faces, face2_id) else {
+            continue;
+        };
+
+        let shell1: Shell<Point3, Curve, Surface> = vec![face1.clone()].into();
+        let shell2: Shell<Point3, Curve, Surface> = vec![face2.clone()].into();
+        let poly1 = shell1.robust_triangulation(tolerance);
+        let poly2 = shell2.robust_triangulation(tolerance);
+        let Some(poly_face1) = poly1.face_iter().next() else {
+            continue;
+        };
+        let Some(poly_face2) = poly2.face_iter().next() else {
+            continue;
+        };
+        let Some(polygon1) = poly_face1.surface() else {
+            continue;
+        };
+        let Some(polygon2) = poly_face2.surface() else {
+            continue;
+        };
+
+        let surface1 = face1.oriented_surface();
+        let surface2 = face2.oriented_surface();
+        let segments = polygon1.extract_interference(&polygon2);
+        let polylines = construct_polylines(&segments);
+        let Some(curves) = build_section_samples(&surface1, &surface2, polylines) else {
+            continue;
+        };
+
+        for samples in curves {
+            if samples.len() < 2 {
+                continue;
+            }
+
+            let start_point = samples[0];
+            let end_point = *samples.last().unwrap_or(&start_point);
+            let is_closed = start_point.distance2(end_point) <= tolerance * tolerance;
+
+            let start = choose_endpoint_vertex(face1, face2, start_point, tolerance)
+                .unwrap_or_else(|| bopds.next_generated_vertex_id());
+            let end = if is_closed {
+                start
+            } else {
+                choose_endpoint_vertex(face1, face2, end_point, tolerance)
+                    .unwrap_or_else(|| bopds.next_generated_vertex_id())
+            };
+            let section_curve_id = bopds.next_section_curve_id();
+
+            bopds.push_section_curve(SectionCurve {
+                id: section_curve_id,
+                faces: (face1_id, face2_id),
+                start,
+                end,
+                samples,
+            });
+            bopds.push_ff_interference(FFInterference {
+                face1: face1_id,
+                face2: face2_id,
+                section_curve: section_curve_id,
+            });
+            count += 1;
+        }
+    }
+
+    count
+}
+
+fn face_by_id<'a>(
+    faces: &'a [(FaceId, Face<Point3, Curve, Surface>)],
+    face_id: FaceId,
+) -> Option<&'a Face<Point3, Curve, Surface>> {
+    faces.iter().find(|(id, _)| *id == face_id).map(|(_, face)| face)
+}
+
+fn choose_endpoint_vertex(
+    face1: &Face<Point3, Curve, Surface>,
+    face2: &Face<Point3, Curve, Surface>,
+    point: Point3,
+    tolerance: f64,
+) -> Option<VertexId> {
+    let tolerance_sq = tolerance * tolerance;
+    endpoint_vertices(face1)
+        .chain(endpoint_vertices(face2))
+        .find(|(_, candidate)| candidate.distance2(point) <= tolerance_sq)
+        .map(|(id, _)| id)
+}
+
+fn endpoint_vertices<'a>(
+    face: &'a Face<Point3, Curve, Surface>,
+) -> impl Iterator<Item = (VertexId, Point3)> + 'a {
+    face.absolute_boundaries()
+        .iter()
+        .flat_map(|wire| wire.vertex_iter())
+        .enumerate()
+        .map(|(index, vertex)| (VertexId(index as u32), vertex.point()))
+}
+
+fn construct_polylines(lines: &[(Point3, Point3)]) -> Vec<Vec<Point3>> {
+    use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+    use std::collections::VecDeque;
+
+    #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+    struct PointIndex([i64; 3]);
+
+    impl From<Point3> for PointIndex {
+        fn from(pt: Point3) -> Self {
+            let tol = truck_base::tolerance::TOLERANCE;
+            Self([
+                ((pt.x + tol) / (2.0 * tol)).floor() as i64,
+                ((pt.y + tol) / (2.0 * tol)).floor() as i64,
+                ((pt.z + tol) / (2.0 * tol)).floor() as i64,
+            ])
+        }
+    }
+
+    struct Node {
+        coord: Point3,
+        adjacency: HashSet<PointIndex>,
+    }
+
+    impl Node {
+        fn new(coord: Point3, adjacency: HashSet<PointIndex>) -> Self { Self { coord, adjacency } }
+
+        fn pop_one_adjacency(&mut self) -> PointIndex {
+            let idx = *self.adjacency.iter().next().unwrap();
+            self.adjacency.remove(&idx);
+            idx
+        }
+    }
+
+    struct Graph(HashMap<PointIndex, Node>);
+
+    impl Graph {
+        fn add_half_edge(&mut self, pt0: Point3, pt1: Point3) {
+            let idx0 = PointIndex::from(pt0);
+            let idx1 = PointIndex::from(pt1);
+            if let Some(node) = self.0.get_mut(&idx0) {
+                node.adjacency.insert(idx1);
+            } else {
+                let mut set = HashSet::default();
+                set.insert(idx1);
+                self.0.insert(idx0, Node::new(pt0, set));
+            }
+        }
+
+        fn add_edge(&mut self, line: (Point3, Point3)) {
+            if !line.0.near(&line.1) {
+                self.add_half_edge(line.0, line.1);
+                self.add_half_edge(line.1, line.0);
+            }
+        }
+
+        fn get_one(&self) -> Option<(PointIndex, &Node)> { self.0.iter().next().map(|(idx, node)| (*idx, node)) }
+
+        fn get_next(&mut self, idx: PointIndex) -> Option<(PointIndex, Point3)> {
+            let node = self.0.get_mut(&idx)?;
+            let next_idx = node.pop_one_adjacency();
+            if node.adjacency.is_empty() {
+                self.0.remove(&idx);
+            }
+            let next = self.0.get_mut(&next_idx)?;
+            next.adjacency.remove(&idx);
+            let point = next.coord;
+            if next.adjacency.is_empty() {
+                self.0.remove(&next_idx);
+            }
+            Some((next_idx, point))
+        }
+    }
+
+    let mut graph = Graph(HashMap::default());
+    for &line in lines {
+        graph.add_edge(line);
+    }
+
+    let mut result = Vec::new();
+    while let Some((mut idx, node)) = graph.get_one() {
+        let mut wire: VecDeque<_> = vec![node.coord].into();
+        while let Some((next_idx, point)) = graph.get_next(idx) {
+            idx = next_idx;
+            wire.push_back(point);
+        }
+        let mut idx = PointIndex::from(wire[0]);
+        while let Some((next_idx, point)) = graph.get_next(idx) {
+            idx = next_idx;
+            wire.push_front(point);
+        }
+        result.push(wire.into_iter().collect());
+    }
+    result
+}
+
+fn build_section_samples(
+    surface1: &Surface,
+    surface2: &Surface,
+    polylines: Vec<Vec<Point3>>,
+) -> Option<Vec<Vec<Point3>>> {
+    let mut sections = Vec::new();
+    for polyline in polylines {
+        let leader = BSplineCurve::new(KnotVec::bezier_knot(polyline.len() - 1), polyline.clone());
+        let curve = IntersectionCurve::new(
+            Box::new(surface1.clone()),
+            Box::new(surface2.clone()),
+            Box::new(Curve::BSplineCurve(leader)),
+        );
+        let len = polyline.len();
+        let mut samples = Vec::new();
+        for index in 0..len.saturating_sub(1) {
+            let (point, _, _) = curve.search_triple(index as f64, SEARCH_PARAMETER_TRIALS)?;
+            samples.push(point);
+        }
+        if let Some(last_index) = len.checked_sub(1) {
+            let (point, _, _) = curve.search_triple(last_index as f64, SEARCH_PARAMETER_TRIALS)?;
+            samples.push(point);
+        }
+        sections.push(samples);
+    }
+    Some(sections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use truck_base::cgmath64::{MetricSpace, Rad, Vector3};
+
+    #[test]
+    fn ff_plane_plane_section_generates_section_curve() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), yz_square_face()), (FaceId(1), xy_square_face())];
+
+        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(count, 1);
+        assert_eq!(bopds.ff_interferences().len(), 1);
+        assert_eq!(bopds.section_curves().len(), 1);
+        let section = &bopds.section_curves()[0];
+        assert_eq!(section.faces, (FaceId(0), FaceId(1)));
+        assert!(section.samples.len() >= 2);
+        let start = section.samples.first().copied().unwrap();
+        let end = section.samples.last().copied().unwrap();
+        assert!(start.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2 || start.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2);
+        assert!(end.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2 || end.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2);
+        assert_ne!(section.start, section.end);
+    }
+
+    #[test]
+    fn ff_parallel_planes_produce_no_section_curve() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), xy_square_face()), (FaceId(1), lifted_xy_square_face(1.0))];
+
+        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(count, 0);
+        assert!(bopds.ff_interferences().is_empty());
+        assert!(bopds.section_curves().is_empty());
+    }
+
+    #[test]
+    fn ff_cylinder_plane_section_generates_polyline_loop_samples() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), cylinder_face()), (FaceId(1), xy_disk_face(1.0))];
+
+        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(count, 1);
+        let section = &bopds.section_curves()[0];
+        assert!(section.samples.len() >= 8);
+        for point in &section.samples {
+            assert!(point.z.abs() < 1.0e-2);
+            let radius = f64::sqrt(point.x * point.x + point.y * point.y);
+            assert!((radius - 1.0).abs() < 5.0e-2);
+        }
+    }
+
+    #[test]
+    fn ff_intersection_allocates_unique_section_curve_ids() {
+        let mut bopds = BopDs::new();
+        let faces = vec![
+            (FaceId(0), yz_square_face()),
+            (FaceId(1), xy_square_face()),
+            (FaceId(2), xz_square_face()),
+        ];
+
+        let count = intersect_ff(
+            &mut bopds,
+            &faces,
+            &[(FaceId(0), FaceId(1)), (FaceId(0), FaceId(2))],
+        );
+
+        assert_eq!(count, 2);
+        assert_eq!(bopds.section_curves()[0].id, crate::SectionCurveId(0));
+        assert_eq!(bopds.section_curves()[1].id, crate::SectionCurveId(1));
+    }
+
+    fn xy_square_face() -> Face<Point3, Curve, Surface> {
+        square_face(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        )
+    }
+
+    fn lifted_xy_square_face(z: f64) -> Face<Point3, Curve, Surface> {
+        square_face(
+            Point3::new(0.0, 0.0, z),
+            Point3::new(1.0, 0.0, z),
+            Point3::new(1.0, 1.0, z),
+            Point3::new(0.0, 1.0, z),
+        )
+    }
+
+    fn yz_square_face() -> Face<Point3, Curve, Surface> {
+        square_face(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 1.0, 1.0),
+            Point3::new(0.0, 0.0, 1.0),
+        )
+    }
+
+    fn xz_square_face() -> Face<Point3, Curve, Surface> {
+        square_face(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 1.0),
+            Point3::new(0.0, 0.0, 1.0),
+        )
+    }
+
+    fn square_face(a: Point3, b: Point3, c: Point3, d: Point3) -> Face<Point3, Curve, Surface> {
+        let vertices = builder::vertices([a, b, c, d]);
+        let edges: Vec<Edge<Point3, Curve>> = vec![
+            builder::line(&vertices[0], &vertices[1]),
+            builder::line(&vertices[1], &vertices[2]),
+            builder::line(&vertices[2], &vertices[3]),
+            builder::line(&vertices[3], &vertices[0]),
+        ];
+        let wire = truck_topology::Wire::from(edges);
+        Face::new(
+            vec![wire],
+            Surface::Plane(truck_modeling::Plane::new(a, b, d)),
+        )
+    }
+
+    fn xy_disk_face(radius: f64) -> Face<Point3, Curve, Surface> {
+        let center = builder::vertex(Point3::new(0.0, 0.0, 0.0));
+        let wire: truck_topology::Wire<Point3, Curve> = builder::rsweep(
+            &center,
+            Point3::new(radius, 0.0, 0.0),
+            Vector3::unit_z(),
+            Rad(std::f64::consts::TAU),
+            16,
+        );
+        Face::new(vec![wire], Surface::Plane(truck_modeling::Plane::xy()))
+    }
+
+    fn cylinder_face() -> Face<Point3, Curve, Surface> {
+        let bottom = builder::vertex(Point3::new(1.0, 0.0, -1.0));
+        let top = builder::vertex(Point3::new(1.0, 0.0, 1.0));
+        let profile = builder::line(&bottom, &top);
+        let shell: Shell<Point3, Curve, Surface> = builder::rsweep(
+            &profile,
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::unit_z(),
+            Rad(std::f64::consts::TAU),
+            24,
+        );
+        shell.face_iter().next().unwrap().clone()
+    }
+}
