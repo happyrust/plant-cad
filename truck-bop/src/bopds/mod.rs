@@ -11,7 +11,7 @@ pub(crate) mod shape_info;
 
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, SectionCurve,
-    TrimmingEdge, TrimmingLoop, VEInterference, VFInterference, VVInterference,
+    SplitFace, TrimmingEdge, TrimmingLoop, VEInterference, VFInterference, VVInterference,
 };
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
@@ -199,6 +199,11 @@ impl BopDs {
         self.interferences.push_trimming_loop(trimming_loop);
     }
 
+    /// Store a split face fragment.
+    pub fn push_split_face(&mut self, split_face: SplitFace) {
+        self.interferences.push_split_face(split_face);
+    }
+
     /// Store a pave.
     pub fn push_pave(&mut self, pave: Pave) {
         self.paves.push(pave);
@@ -273,6 +278,11 @@ impl BopDs {
     /// Borrow all stored trimming loops.
     pub fn trimming_loops(&self) -> &[TrimmingLoop] {
         self.interferences.trimming_loops()
+    }
+
+    /// Borrow all stored split face fragments.
+    pub fn split_faces(&self) -> &[SplitFace] {
+        self.interferences.split_faces()
     }
 
     /// Borrow all stored paves.
@@ -703,6 +713,36 @@ mod tests {
         ds.push_trimming_loop(trimming_loop.clone());
 
         assert_eq!(ds.trimming_loops(), &[trimming_loop]);
+    }
+
+    #[test]
+    fn stores_split_face_records() {
+        let mut ds = BopDs::new();
+        let split_face = SplitFace {
+            original_face: FaceId(3),
+            trimming_loops: vec![TrimmingLoop {
+                face: FaceId(3),
+                edges: vec![TrimmingEdge {
+                    section_curve: Some(SectionCurveId(0)),
+                    uv_points: vec![
+                        truck_base::cgmath64::Point2::new(0.0, 0.0),
+                        truck_base::cgmath64::Point2::new(1.0, 0.0),
+                    ],
+                }],
+                uv_points: vec![
+                    truck_base::cgmath64::Point2::new(0.0, 0.0),
+                    truck_base::cgmath64::Point2::new(1.0, 0.0),
+                    truck_base::cgmath64::Point2::new(0.0, 0.0),
+                ],
+                signed_area: 1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![SectionCurveId(0)],
+        };
+
+        ds.push_split_face(split_face.clone());
+
+        assert_eq!(ds.split_faces(), &[split_face]);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {

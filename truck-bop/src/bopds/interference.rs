@@ -3,6 +3,17 @@
 use crate::{EdgeId, FaceId, SectionCurveId, VertexId};
 use truck_base::cgmath64::Point2;
 
+/// A face fragment created while splitting a source face.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitFace {
+    /// Source face that was split.
+    pub original_face: FaceId,
+    /// Trimming loops that bound the fragment.
+    pub trimming_loops: Vec<TrimmingLoop>,
+    /// Section curves that contributed split boundaries to this fragment.
+    pub splitting_edges: Vec<SectionCurveId>,
+}
+
 /// A trimming edge represented in a face's parameter space.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrimmingEdge {
@@ -131,6 +142,8 @@ pub struct InterferenceTable {
     pub section_curves: Vec<SectionCurve>,
     /// Trimming loops generated per face from boundaries and section edges.
     pub trimming_loops: Vec<TrimmingLoop>,
+    /// Split face fragments with provenance information.
+    pub split_faces: Vec<SplitFace>,
 }
 
 impl InterferenceTable {
@@ -174,6 +187,11 @@ impl InterferenceTable {
         self.trimming_loops.push(trimming_loop);
     }
 
+    /// Store a split face fragment.
+    pub fn push_split_face(&mut self, split_face: SplitFace) {
+        self.split_faces.push(split_face);
+    }
+
     /// Borrow all vertex-vertex interferences.
     pub fn vv(&self) -> &[VVInterference] {
         &self.vv
@@ -212,6 +230,11 @@ impl InterferenceTable {
     /// Borrow all trimming loops.
     pub fn trimming_loops(&self) -> &[TrimmingLoop] {
         &self.trimming_loops
+    }
+
+    /// Borrow all split face fragments.
+    pub fn split_faces(&self) -> &[SplitFace] {
+        &self.split_faces
     }
 }
 
@@ -335,5 +358,33 @@ mod tests {
         table.push_trimming_loop(trimming_loop.clone());
 
         assert_eq!(table.trimming_loops(), &[trimming_loop]);
+    }
+
+    #[test]
+    fn stores_split_face_records() {
+        let mut table = InterferenceTable::default();
+        let loop_record = TrimmingLoop {
+            face: FaceId(1),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(SectionCurveId(2)),
+                uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
+            }],
+            uv_points: vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(1.0, 0.0),
+                Point2::new(0.0, 0.0),
+            ],
+            signed_area: 1.0,
+            is_outer: true,
+        };
+        let split_face = SplitFace {
+            original_face: FaceId(1),
+            trimming_loops: vec![loop_record],
+            splitting_edges: vec![SectionCurveId(2)],
+        };
+
+        table.push_split_face(split_face.clone());
+
+        assert_eq!(table.split_faces(), &[split_face]);
     }
 }

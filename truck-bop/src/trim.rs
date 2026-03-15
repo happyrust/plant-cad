@@ -1,6 +1,6 @@
 //! Face trimming loop construction.
 
-use crate::{bopds::{SectionCurve, TrimmingEdge, TrimmingLoop}, BopDs, FaceId};
+use crate::{bopds::{SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop}, BopDs, FaceId, SectionCurveId};
 use truck_base::cgmath64::{MetricSpace, Point2, Point3};
 use truck_geotrait::{D2, Invertible, SearchParameter};
 use truck_topology::Face;
@@ -29,6 +29,36 @@ where
     }
 
     built
+}
+
+/// Builds split-face provenance records from trimming loops already stored in `BopDs`.
+pub fn build_split_faces(bopds: &mut BopDs) -> usize {
+    let split_faces: Vec<SplitFace> = bopds
+        .trimming_loops()
+        .iter()
+        .filter(|loop_| loop_.is_outer)
+        .map(|outer_loop| {
+            let mut trimming_loops = vec![outer_loop.clone()];
+            trimming_loops.extend(
+                bopds.trimming_loops()
+                    .iter()
+                    .filter(|loop_| loop_.face == outer_loop.face && !loop_.is_outer)
+                    .cloned(),
+            );
+            let splitting_edges = collect_splitting_edges(&trimming_loops);
+            SplitFace {
+                original_face: outer_loop.face,
+                trimming_loops,
+                splitting_edges,
+            }
+        })
+        .collect();
+
+    for split_face in &split_faces {
+        bopds.push_split_face(split_face.clone());
+    }
+
+    split_faces.len()
 }
 
 fn build_loops_for_face<C, S>(
@@ -199,6 +229,21 @@ fn signed_area(polyline: &[Point2]) -> f64 {
     area / 2.0
 }
 
+fn collect_splitting_edges(trimming_loops: &[TrimmingLoop]) -> Vec<SectionCurveId> {
+    let mut splitting_edges = Vec::new();
+    for trimming_loop in trimming_loops {
+        for edge in &trimming_loop.edges {
+            let Some(section_curve) = edge.section_curve else {
+                continue;
+            };
+            if !splitting_edges.contains(&section_curve) {
+                splitting_edges.push(section_curve);
+            }
+        }
+    }
+    splitting_edges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +334,79 @@ mod tests {
         assert!(inner.edges.iter().all(|edge| edge.section_curve.is_none()));
     }
 
+    #[test]
+    fn split_face_records_group_loops_by_original_face() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let section_curve_id = bopds.next_section_curve_id();
+        bopds.push_section_curve(section_curve(section_curve_id));
+
+        let loops = build_trimming_loops(&mut bopds, &[(FaceId(0), unit_square_face())]);
+        assert_eq!(loops, 2);
+
+        let built = build_split_faces(&mut bopds);
+
+        assert_eq!(built, 1);
+        let split_faces = bopds.split_faces();
+        assert_eq!(split_faces.len(), 1);
+        assert_eq!(split_faces[0].original_face, FaceId(0));
+        assert_eq!(split_faces[0].trimming_loops.len(), 2);
+    }
+
+    #[test]
+    fn split_face_records_capture_splitting_edges_once() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let section_curve_id = bopds.next_section_curve_id();
+        bopds.push_section_curve(section_curve(section_curve_id));
+
+        build_trimming_loops(&mut bopds, &[(FaceId(0), unit_square_face())]);
+        build_split_faces(&mut bopds);
+
+        let split_face = &bopds.split_faces()[0];
+        assert_eq!(split_face.splitting_edges, vec![section_curve_id]);
+    }
+
+    #[test]
+    fn split_face_records_are_queryable_from_bopds() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        build_trimming_loops(
+            &mut bopds,
+            &[(FaceId(0), unit_square_face()), (FaceId(1), unit_square_face())],
+        );
+
+        let built = build_split_faces(&mut bopds);
+
+        assert_eq!(built, 2);
+        let faces: Vec<FaceId> = bopds.split_faces().iter().map(|split_face| split_face.original_face).collect();
+        assert_eq!(faces, vec![FaceId(0), FaceId(1)]);
+        assert!(bopds.split_faces().iter().all(|split_face| split_face.trimming_loops.len() == 1));
+    }
+
+    #[test]
+    fn split_face_records_skip_faces_without_outer_loops() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        bopds.push_trimming_loop(TrimmingLoop {
+            face: FaceId(0),
+            edges: vec![TrimmingEdge {
+                section_curve: Some(SectionCurveId(7)),
+                uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
+            }],
+            uv_points: vec![
+                Point2::new(0.25, 0.25),
+                Point2::new(0.75, 0.25),
+                Point2::new(0.75, 0.75),
+                Point2::new(0.25, 0.75),
+                Point2::new(0.25, 0.25),
+            ],
+            signed_area: -0.25,
+            is_outer: false,
+        });
+
+        let built = build_split_faces(&mut bopds);
+
+        assert_eq!(built, 0);
+        assert!(bopds.split_faces().is_empty());
+    }
+
     fn unit_square_face() -> Face<Point3, Curve, Surface> {
         square_face(
             [
@@ -347,5 +465,40 @@ mod tests {
             boundaries,
             Surface::Plane(truck_modeling::Plane::new(outer[0], outer[1], outer[3])),
         )
+    }
+
+    fn section_curve(section_curve_id: SectionCurveId) -> SectionCurve {
+        SectionCurve {
+            id: section_curve_id,
+            faces: (FaceId(0), FaceId(1)),
+            start: VertexId(10),
+            end: VertexId(10),
+            samples: vec![
+                Point3::new(0.25, 0.25, 0.0),
+                Point3::new(0.75, 0.25, 0.0),
+                Point3::new(0.75, 0.75, 0.0),
+                Point3::new(0.25, 0.75, 0.0),
+            ],
+            face_parameters: [
+                (
+                    FaceId(0),
+                    vec![
+                        Point2::new(0.25, 0.25),
+                        Point2::new(0.75, 0.25),
+                        Point2::new(0.75, 0.75),
+                        Point2::new(0.25, 0.75),
+                    ],
+                ),
+                (
+                    FaceId(1),
+                    vec![
+                        Point2::new(0.25, 0.25),
+                        Point2::new(0.75, 0.25),
+                        Point2::new(0.75, 0.75),
+                        Point2::new(0.25, 0.75),
+                    ],
+                ),
+            ],
+        }
     }
 }
