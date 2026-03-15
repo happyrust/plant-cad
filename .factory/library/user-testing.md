@@ -1,21 +1,32 @@
 # User Testing
 
+Testing surface and validation approach for truck-bop.
+
+**What belongs here:** Test execution details, validation surface info, resource constraints.
+
+---
+
 ## Validation Surface
 
-**Testing Surface:** Rust unit tests via cargo test
-- No UI or browser testing needed (pure library)
-- Validation through test assertions and BopDs queries
+**Surface:** Command-line (cargo test)
 
 **Tools:**
 - cargo test -p truck-bop
+- cargo check -p truck-bop
 - cargo clippy -p truck-bop
-- proptest for property-based tests
 
-**Setup:** None required
+**Approach:**
+- Unit tests verify individual algorithms
+- Integration tests verify end-to-end boolean operations
+- TDD: write failing tests first, then implement
 
 ## Validation Concurrency
 
-**Surface:** cargo test
-**Per-validator cost:** ~100-200 MB RAM
 **Max concurrent validators:** 5
-**Rationale:** Conservative estimate with 70% headroom on 16 GB machine (10 CPU cores)
+
+**Rationale:** Tests are CPU-bound. Machine has 12 cores with sufficient memory. 5 concurrent test processes provide good parallelism without overloading.
+
+**Resource profile:**
+- Each test process: ~200MB RAM, 1-2 CPU cores
+- Total for 5 concurrent: ~1GB RAM, 5-10 cores
+- Well within machine capacity

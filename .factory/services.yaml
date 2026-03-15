@@ -1,7 +1,8 @@
 commands:
+  install: cargo build -p truck-bop
   test: cargo test -p truck-bop
-  clippy: cargo clippy -p truck-bop
   check: cargo check -p truck-bop
-  build: cargo build -p truck-bop
+  lint: cargo clippy -p truck-bop
+  typecheck: cargo check -p truck-bop
 
 services: {}
