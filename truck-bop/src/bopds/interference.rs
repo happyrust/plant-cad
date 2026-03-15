@@ -121,6 +121,8 @@ pub struct SectionCurve {
     pub samples: Vec<truck_base::cgmath64::Point3>,
     /// Polyline samples of the section projected into each source face's parameter space.
     pub face_parameters: [(FaceId, Vec<Point2>); 2],
+    /// Whether UV projection succeeded for each source face.
+    pub face_projection_available: [(FaceId, bool); 2],
 }
 
 /// Interference table
@@ -323,6 +325,7 @@ mod tests {
                 (FaceId(1), vec![Point2::new(0.0, 0.0)]),
                 (FaceId(2), vec![Point2::new(1.0, 1.0)]),
             ],
+            face_projection_available: [(FaceId(1), true), (FaceId(2), true)],
         };
         let interference = FFInterference {
             face1: FaceId(1),

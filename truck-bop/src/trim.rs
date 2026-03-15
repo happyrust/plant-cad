@@ -302,6 +302,7 @@ mod tests {
                     ],
                 ),
             ],
+            face_projection_available: [(FaceId(0), true), (FaceId(1), true)],
         });
 
         let count = build_trimming_loops(&mut bopds, &[(FaceId(0), unit_square_face())]);
@@ -499,6 +500,7 @@ mod tests {
                     ],
                 ),
             ],
+            face_projection_available: [(FaceId(0), true), (FaceId(1), true)],
         }
     }
 }

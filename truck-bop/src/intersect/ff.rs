@@ -71,12 +71,15 @@ pub fn intersect_ff(
             };
             let section_curve_id = bopds.next_section_curve_id();
 
-            let Some(face1_parameters) = project_section_to_face(face1, &samples) else {
-                continue;
-            };
-            let Some(face2_parameters) = project_section_to_face(face2, &samples) else {
-                continue;
-            };
+            let face1_parameters = project_section_to_face(face1, &samples);
+            let face2_parameters = project_section_to_face(face2, &samples);
+            let [face1_parameters, face2_parameters] = orient_open_section_pair(
+                [face1, face2],
+                &samples,
+                [face1_parameters, face2_parameters],
+            );
+            let face1_projection_available = face1_parameters.is_some();
+            let face2_projection_available = face2_parameters.is_some();
 
             bopds.push_section_curve(SectionCurve {
                 id: section_curve_id,
@@ -84,8 +87,12 @@ pub fn intersect_ff(
                 start,
                 end,
                 face_parameters: [
-                    (face1_id, face1_parameters),
-                    (face2_id, face2_parameters),
+                    (face1_id, face1_parameters.unwrap_or_default()),
+                    (face2_id, face2_parameters.unwrap_or_default()),
+                ],
+                face_projection_available: [
+                    (face1_id, face1_projection_available),
+                    (face2_id, face2_projection_available),
                 ],
                 samples,
             });
@@ -107,14 +114,11 @@ fn project_section_to_face(
 ) -> Option<Vec<Point2>> {
     let surface = face.oriented_surface();
     let mut parameters = Vec::with_capacity(samples.len());
-    let mut previous = None;
 
     for &point in samples {
         let uv = surface
-            .search_parameter(point, previous.map(Into::into), SEARCH_PARAMETER_TRIALS)
-            .or_else(|| surface.search_parameter(point, None, SEARCH_PARAMETER_TRIALS))?;
+            .search_parameter(point, None, SEARCH_PARAMETER_TRIALS)?;
         parameters.push(Point2::new(uv.0, uv.1));
-        previous = Some(Point2::new(uv.0, uv.1));
     }
 
     if !face.orientation() {
@@ -124,10 +128,7 @@ fn project_section_to_face(
     orient_parameter_loop(face, parameters)
 }
 
-fn orient_parameter_loop(
-    face: &Face<Point3, Curve, Surface>,
-    mut parameters: Vec<Point2>,
-) -> Option<Vec<Point2>> {
+fn orient_parameter_loop(face: &Face<Point3, Curve, Surface>, mut parameters: Vec<Point2>) -> Option<Vec<Point2>> {
     if parameters.len() < 2 {
         return Some(parameters);
     }
@@ -142,6 +143,68 @@ fn orient_parameter_loop(
         parameters.reverse();
     }
     Some(parameters)
+}
+
+fn orient_open_section_pair(
+    faces: [&Face<Point3, Curve, Surface>; 2],
+    samples: &[Point3],
+    mut parameters: [Option<Vec<Point2>>; 2],
+) -> [Option<Vec<Point2>>; 2] {
+    let Some(start_point) = samples.first() else {
+        return parameters;
+    };
+    let Some(end_point) = samples.last() else {
+        return parameters;
+    };
+    if start_point.distance2(*end_point)
+        <= truck_base::tolerance::TOLERANCE * truck_base::tolerance::TOLERANCE
+    {
+        return parameters;
+    }
+
+    if !faces[0].orientation() {
+        if let Some(parameters) = parameters[0].as_mut() {
+            parameters.reverse();
+        }
+    }
+    if !faces[1].orientation() {
+        if let Some(parameters) = parameters[1].as_mut() {
+            parameters.reverse();
+        }
+    }
+
+    let face0_direction = parameters[0]
+        .as_ref()
+        .and_then(|parameters| endpoint_direction_key(faces[0], parameters));
+    let face1_direction = parameters[1]
+        .as_ref()
+        .and_then(|parameters| endpoint_direction_key(faces[1], parameters));
+    if face0_direction.is_some() && face1_direction.is_some() && face0_direction != face1_direction {
+        if let Some(parameters) = parameters[1].as_mut() {
+            parameters.reverse();
+        }
+    }
+    parameters
+}
+
+fn endpoint_direction_key(
+    face: &Face<Point3, Curve, Surface>,
+    parameters: &[Point2],
+) -> Option<(usize, usize)> {
+    let boundary = parameter_boundary(face)?;
+    let start = *parameters.first()?;
+    let end = *parameters.last()?;
+    let start_index = boundary
+        .iter()
+        .enumerate()
+        .min_by(|(_, lhs), (_, rhs)| lhs.distance2(start).total_cmp(&rhs.distance2(start)))?
+        .0;
+    let end_index = boundary
+        .iter()
+        .enumerate()
+        .min_by(|(_, lhs), (_, rhs)| lhs.distance2(end).total_cmp(&rhs.distance2(end)))?
+        .0;
+    Some((start_index, end_index))
 }
 
 fn parameter_boundary(face: &Face<Point3, Curve, Surface>) -> Option<Vec<Point2>> {
@@ -376,7 +439,40 @@ mod tests {
         assert_eq!(count, 1);
         let section = &bopds.section_curves()[0];
         let yz_parameters = &section.face_parameters[0].1;
+        assert!(section.face_projection_available[0].1);
         assert!(yz_parameters.first().unwrap().y >= yz_parameters.last().unwrap().y);
+    }
+
+    #[test]
+    fn ff_intersection_keeps_section_curve_when_one_face_projection_fails() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), yz_square_face()), (FaceId(1), xy_square_face())];
+        let samples = vec![Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 1.0, 0.0)];
+        let section_curve_id = bopds.next_section_curve_id();
+
+        let [face1_parameters, face2_parameters] = orient_open_section_pair(
+            [&faces[0].1, &faces[1].1],
+            &samples,
+            [project_section_to_face(&faces[0].1, &samples), None],
+        );
+
+        bopds.push_section_curve(SectionCurve {
+            id: section_curve_id,
+            faces: (FaceId(0), FaceId(1)),
+            start: VertexId(0),
+            end: VertexId(1),
+            face_parameters: [
+                (FaceId(0), face1_parameters.unwrap_or_default()),
+                (FaceId(1), face2_parameters.unwrap_or_default()),
+            ],
+            face_projection_available: [(FaceId(0), true), (FaceId(1), false)],
+            samples,
+        });
+
+        let section = &bopds.section_curves()[0];
+        assert_eq!(section.samples.len(), 2);
+        assert_eq!(section.face_parameters[1].1, Vec::<Point2>::new());
+        assert_eq!(section.face_projection_available, [(FaceId(0), true), (FaceId(1), false)]);
     }
 
     #[test]

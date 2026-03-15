@@ -675,6 +675,7 @@ mod tests {
                 (FaceId(0), vec![truck_base::cgmath64::Point2::new(0.0, 0.0)]),
                 (FaceId(1), vec![truck_base::cgmath64::Point2::new(0.0, 0.0)]),
             ],
+            face_projection_available: [(FaceId(0), true), (FaceId(1), true)],
         };
         let interference = FFInterference {
             face1: FaceId(0),
