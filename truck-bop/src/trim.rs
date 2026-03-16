@@ -14,6 +14,7 @@ use crate::{
 use rustc_hash::FxHashMap;
 use truck_base::cgmath64::{MetricSpace, Point2, Point3};
 use truck_geotrait::{D2, Invertible, SearchParameter};
+use truck_topology::shell::ShellCondition;
 use truck_topology::{Face, Solid};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
@@ -231,6 +232,55 @@ pub fn sew_fragment_edges(
     paths
 }
 
+/// Assembles oriented split faces into closed shell components.
+pub fn assemble_shells<C, S>(
+    split_faces: &[SplitFace],
+    faces_by_id: &FxHashMap<FaceId, Face<Point3, C, S>>,
+) -> Result<Vec<truck_topology::Shell<Point3, C, S>>, BopError>
+where
+    C: Clone,
+    S: Clone,
+{
+    let mut pending = split_faces
+        .iter()
+        .map(|split_face| {
+            let face = faces_by_id
+                .get(&split_face.original_face)
+                .cloned()
+                .ok_or(BopError::InternalInvariant("missing source face for split face"))?;
+            Ok((split_face.original_face, face))
+        })
+        .collect::<Result<Vec<_>, BopError>>()?;
+    let mut shells = Vec::new();
+
+    while let Some((_, seed_face)) = pending.pop() {
+        let mut shell_faces = vec![seed_face];
+        let mut advanced = true;
+        while advanced {
+            advanced = false;
+            let mut index = 0;
+            while index < pending.len() {
+                let candidate = pending[index].1.clone();
+                if let Some(oriented) = orient_face_against_shell(&shell_faces, &candidate) {
+                    shell_faces.push(oriented);
+                    pending.swap_remove(index);
+                    advanced = true;
+                } else {
+                    index += 1;
+                }
+            }
+        }
+
+        let shell: truck_topology::Shell<Point3, C, S> = shell_faces.into_iter().collect();
+        if shell.shell_condition() != ShellCondition::Closed {
+            return Err(BopError::TopologyInvariantBroken);
+        }
+        shells.push(shell);
+    }
+
+    Ok(shells)
+}
+
 fn collect_sewn_edges(
     split_faces: &[SplitFace],
     merged_vertices: &FxHashMap<VertexId, VertexId>,
@@ -245,15 +295,26 @@ fn collect_sewn_edges(
             }
 
             for (edge_index, edge) in trimming_loop.edges.iter().enumerate() {
+                let edge_vertices = open_polygon_vertices(&edge.uv_points);
+                let (raw_start, raw_end) = match (edge_vertices.first(), edge_vertices.last()) {
+                    (Some(start), Some(end)) if !near_points(*start, *end) => (*start, *end),
+                    _ => (
+                        trimming_loop.uv_points[edge_index],
+                        trimming_loop.uv_points[(edge_index + 1) % trimming_loop.uv_points.len()],
+                    ),
+                };
+                let loop_start = trimming_loop.uv_points[edge_index];
+                let loop_end = trimming_loop.uv_points[(edge_index + 1) % trimming_loop.uv_points.len()];
                 let start = vertices[edge_index];
                 let end = vertices[(edge_index + 1) % vertices.len()];
+                let reversed = near_points(raw_start, loop_end) && near_points(raw_end, loop_start);
                 edges.push(SewnEdge {
                     face: split_face.original_face,
                     loop_index,
                     edge_index,
                     start_vertex: merged_vertices.get(&start).copied().unwrap_or(start),
                     end_vertex: merged_vertices.get(&end).copied().unwrap_or(end),
-                    reversed: false,
+                    reversed,
                     section_curve: edge.section_curve,
                 });
             }
@@ -289,6 +350,49 @@ fn open_loop_vertex_ids(trimming_loop: &TrimmingLoop) -> &[VertexId] {
     } else {
         &trimming_loop.vertex_ids
     }
+}
+
+fn orient_face_against_shell<C, S>(
+    shell_faces: &[Face<Point3, C, S>],
+    candidate: &Face<Point3, C, S>,
+) -> Option<Face<Point3, C, S>>
+where
+    C: Clone,
+    S: Clone,
+{
+    for existing in shell_faces {
+        if let Some(should_invert) = shared_edge_orientation(existing, candidate) {
+            return Some(if should_invert {
+                candidate.inverse()
+            } else {
+                candidate.clone()
+            });
+        }
+    }
+    None
+}
+
+fn shared_edge_orientation<C, S>(
+    lhs: &Face<Point3, C, S>,
+    rhs: &Face<Point3, C, S>,
+) -> Option<bool>
+where
+    C: Clone,
+    S: Clone,
+{
+    for lhs_edge in lhs.boundaries().into_iter().flatten() {
+        for rhs_edge in rhs.boundaries().into_iter().flatten() {
+            if lhs_edge.id() == rhs_edge.id() {
+                return Some(lhs_edge.orientation() == rhs_edge.orientation());
+            }
+        }
+    }
+    None
+}
+
+fn near_points(lhs: Point2, rhs: Point2) -> bool {
+    const UV_TOLERANCE: f64 = 1.0e-9;
+    lhs.distance2(rhs) <= UV_TOLERANCE * UV_TOLERANCE
 }
 
 fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> bool {
@@ -727,7 +831,9 @@ mod tests {
     use super::*;
     use crate::{bopds::SectionCurve, BopOptions, VertexId};
     use truck_base::bounding_box::BoundingBox;
+    use truck_base::cgmath64::Vector3;
     use truck_modeling::{builder, primitive, Curve, Surface};
+    use truck_topology::shell::ShellCondition;
     use truck_topology::{Wire, Solid};
 
     #[test]
@@ -1547,6 +1653,57 @@ mod tests {
         assert!(paths[0].edges[1].reversed);
     }
 
+    #[test]
+    fn face_orientation_flips_adjacent_face_to_close_shell() {
+        let shell = box_shell_with_inverted_top();
+        let faces: Vec<_> = shell.face_iter().cloned().collect();
+        let split_faces = split_faces_for_source_faces(&faces);
+        let faces_by_id = source_face_map(&split_faces, &faces);
+
+        let shells = assemble_shells(&split_faces, &faces_by_id).unwrap();
+
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].shell_condition(), ShellCondition::Closed);
+    }
+
+    #[test]
+    fn shell_closure_rejects_boundary_edge_component() {
+        let shell = open_box_shell_missing_top();
+        let faces: Vec<_> = shell.face_iter().cloned().collect();
+        let split_faces = split_faces_for_source_faces(&faces);
+        let faces_by_id = source_face_map(&split_faces, &faces);
+
+        let err = assemble_shells(&split_faces, &faces_by_id).unwrap_err();
+
+        assert!(matches!(err, BopError::TopologyInvariantBroken));
+    }
+
+    #[test]
+    fn shell_assembly_separates_disconnected_closed_components() {
+        let left = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]));
+        let right: Solid<Point3, Curve, Surface> = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]))
+            .mapped(
+                &|point: &Point3| *point + Vector3::new(3.0, 0.0, 0.0),
+                &|curve: &Curve| curve.clone(),
+                &|surface: &Surface| surface.clone(),
+            );
+        let mut faces: Vec<_> = left.boundaries()[0].face_iter().cloned().collect();
+        faces.extend(right.boundaries()[0].face_iter().cloned());
+        let split_faces = split_faces_for_source_faces(&faces);
+        let faces_by_id = source_face_map(&split_faces, &faces);
+
+        let shells = assemble_shells(&split_faces, &faces_by_id).unwrap();
+
+        assert_eq!(shells.len(), 2);
+        assert!(shells.iter().all(|shell| shell.shell_condition() == ShellCondition::Closed));
+    }
+
     fn bopds_with_classified_fragments(classifications: Vec<(u8, PointClassification)>) -> BopDs {
         let mut bopds = BopDs::with_options(BopOptions::default());
         for (index, (operand_rank, classification)) in classifications.into_iter().enumerate() {
@@ -1699,5 +1856,55 @@ mod tests {
     fn operand_box(rank: u8, min: Point3, max: Point3) -> Solid<Point3, Curve, Surface> {
         let _ = rank;
         primitive::cuboid(BoundingBox::from_iter([min, max]))
+    }
+
+    fn split_faces_for_source_faces(faces: &[Face<Point3, Curve, Surface>]) -> Vec<SplitFace> {
+        faces
+            .iter()
+            .enumerate()
+            .map(|(index, _)| SplitFace {
+                original_face: FaceId(index as u32),
+                operand_rank: 0,
+                trimming_loops: vec![],
+                splitting_edges: vec![],
+                representative_point: None,
+                classification: Some(PointClassification::OnBoundary),
+            })
+            .collect()
+    }
+
+    fn source_face_map(
+        split_faces: &[SplitFace],
+        faces: &[Face<Point3, Curve, Surface>],
+    ) -> FxHashMap<FaceId, Face<Point3, Curve, Surface>> {
+        split_faces
+            .iter()
+            .zip(faces.iter().cloned())
+            .map(|(split_face, face)| (split_face.original_face, face))
+            .collect()
+    }
+
+    fn box_shell_with_inverted_top() -> truck_topology::Shell<Point3, Curve, Surface> {
+        let mut shell = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]))
+        .into_boundaries()
+        .pop()
+        .unwrap();
+        shell[5].invert();
+        shell
+    }
+
+    fn open_box_shell_missing_top() -> truck_topology::Shell<Point3, Curve, Surface> {
+        let mut shell = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]))
+        .into_boundaries()
+        .pop()
+        .unwrap();
+        shell.pop();
+        shell
     }
 }

@@ -33,6 +33,7 @@ pub use intersect::{intersect_ee, intersect_ef, intersect_ff, intersect_ve, inte
 pub use options::BopOptions;
 pub use pipeline::{BooleanOp, PointClassification, classify_point_in_solid};
 pub use trim::{
+    assemble_shells,
     build_split_faces,
     build_trimming_loops,
     classify_split_faces_against_operand,
