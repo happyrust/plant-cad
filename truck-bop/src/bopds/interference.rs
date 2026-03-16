@@ -1,6 +1,6 @@
 //! Interference structures
 
-use crate::{EdgeId, FaceId, SectionCurveId, VertexId};
+use crate::{EdgeId, FaceId, PointClassification, SectionCurveId, VertexId};
 use truck_base::cgmath64::Point2;
 
 /// A face fragment created while splitting a source face.
@@ -8,10 +8,16 @@ use truck_base::cgmath64::Point2;
 pub struct SplitFace {
     /// Source face that was split.
     pub original_face: FaceId,
+    /// Source operand rank for the fragment's owning face.
+    pub operand_rank: u8,
     /// Trimming loops that bound the fragment.
     pub trimming_loops: Vec<TrimmingLoop>,
     /// Section curves that contributed split boundaries to this fragment.
     pub splitting_edges: Vec<SectionCurveId>,
+    /// Representative point used for classification against the opposite operand.
+    pub representative_point: Option<truck_base::cgmath64::Point3>,
+    /// Classification state against the opposite operand.
+    pub classification: Option<PointClassification>,
 }
 
 /// A trimming edge represented in a face's parameter space.
@@ -382,8 +388,11 @@ mod tests {
         };
         let split_face = SplitFace {
             original_face: FaceId(1),
+            operand_rank: 0,
             trimming_loops: vec![loop_record],
             splitting_edges: vec![SectionCurveId(2)],
+            representative_point: Some(truck_base::cgmath64::Point3::new(0.5, 0.5, 0.0)),
+            classification: Some(PointClassification::Inside),
         };
 
         table.push_split_face(split_face.clone());

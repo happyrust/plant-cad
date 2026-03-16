@@ -21,6 +21,7 @@ pub use pave_block::PaveBlock;
 
 use rustc_hash::FxHashMap;
 use crate::BopOptions;
+use crate::PointClassification;
 use shape_info::{ShapeInfo, ShapeKind};
 use truck_base::cgmath64::Point3;
 use truck_geotrait::{BoundedCurve, Invertible, ParametricCurve};
@@ -202,6 +203,19 @@ impl BopDs {
     /// Store a split face fragment.
     pub fn push_split_face(&mut self, split_face: SplitFace) {
         self.interferences.push_split_face(split_face);
+    }
+
+    /// Update a split face classification in place.
+    pub fn set_split_face_classification(
+        &mut self,
+        index: usize,
+        representative_point: Point3,
+        classification: PointClassification,
+    ) {
+        if let Some(split_face) = self.interferences.split_faces.get_mut(index) {
+            split_face.representative_point = Some(representative_point);
+            split_face.classification = Some(classification);
+        }
     }
 
     /// Store a pave.
@@ -721,6 +735,7 @@ mod tests {
         let mut ds = BopDs::new();
         let split_face = SplitFace {
             original_face: FaceId(3),
+            operand_rank: 0,
             trimming_loops: vec![TrimmingLoop {
                 face: FaceId(3),
                 edges: vec![TrimmingEdge {
@@ -739,11 +754,31 @@ mod tests {
                 is_outer: true,
             }],
             splitting_edges: vec![SectionCurveId(0)],
+            representative_point: Some(Point3::new(0.5, 0.5, 0.0)),
+            classification: Some(PointClassification::Inside),
         };
 
         ds.push_split_face(split_face.clone());
 
         assert_eq!(ds.split_faces(), &[split_face]);
+    }
+
+    #[test]
+    fn updates_split_face_classification_in_place() {
+        let mut ds = BopDs::new();
+        ds.push_split_face(SplitFace {
+            original_face: FaceId(3),
+            operand_rank: 1,
+            trimming_loops: vec![],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: None,
+        });
+
+        ds.set_split_face_classification(0, Point3::new(1.0, 2.0, 3.0), PointClassification::OnBoundary);
+
+        assert_eq!(ds.split_faces()[0].representative_point, Some(Point3::new(1.0, 2.0, 3.0)));
+        assert_eq!(ds.split_faces()[0].classification, Some(PointClassification::OnBoundary));
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {
