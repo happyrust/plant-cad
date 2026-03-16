@@ -34,6 +34,7 @@ pub use options::BopOptions;
 pub use pipeline::{BooleanOp, PointClassification, classify_point_in_solid};
 pub use trim::{
     assemble_shells,
+    build_solids_from_shells,
     build_split_faces,
     build_trimming_loops,
     classify_split_faces_against_operand,

@@ -281,6 +281,30 @@ where
     Ok(shells)
 }
 
+/// Builds solids from closed shell components and verifies topology validity.
+pub fn build_solids_from_shells<C, S>(
+    shells: Vec<truck_topology::Shell<Point3, C, S>>,
+) -> Result<Vec<Solid<Point3, C, S>>, BopError>
+where
+    C: Clone,
+    S: Clone,
+{
+    let mut solids = Vec::with_capacity(shells.len());
+    for shell in shells {
+        if shell.shell_condition() != ShellCondition::Closed {
+            return Err(BopError::TopologyInvariantBroken);
+        }
+
+        let solid = Solid::new(vec![shell]);
+        match solid.boundaries().as_slice() {
+            [boundary] if boundary.shell_condition() == ShellCondition::Closed => solids.push(solid),
+            _ => return Err(BopError::TopologyInvariantBroken),
+        }
+    }
+
+    Ok(solids)
+}
+
 fn collect_sewn_edges(
     split_faces: &[SplitFace],
     merged_vertices: &FxHashMap<VertexId, VertexId>,
@@ -1702,6 +1726,44 @@ mod tests {
 
         assert_eq!(shells.len(), 2);
         assert!(shells.iter().all(|shell| shell.shell_condition() == ShellCondition::Closed));
+    }
+
+    #[test]
+    fn solid_construction_wraps_each_closed_shell_into_valid_solid() {
+        let left = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]))
+        .into_boundaries()
+        .pop()
+        .unwrap();
+        let right = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]))
+        .mapped(
+            &|point: &Point3| *point + Vector3::new(3.0, 0.0, 0.0),
+            &|curve: &Curve| curve.clone(),
+            &|surface: &Surface| surface.clone(),
+        )
+        .into_boundaries()
+        .pop()
+        .unwrap();
+
+        let solids = build_solids_from_shells(vec![left, right]).unwrap();
+
+        assert_eq!(solids.len(), 2);
+        assert!(solids.iter().all(|solid| solid.boundaries().len() == 1));
+        assert!(solids.iter().all(|solid| solid.boundaries()[0].shell_condition() == ShellCondition::Closed));
+    }
+
+    #[test]
+    fn solid_construction_rejects_non_closed_shells() {
+        let shell = open_box_shell_missing_top();
+
+        let err = build_solids_from_shells(vec![shell]).unwrap_err();
+
+        assert!(matches!(err, BopError::TopologyInvariantBroken));
     }
 
     fn bopds_with_classified_fragments(classifications: Vec<(u8, PointClassification)>) -> BopDs {
