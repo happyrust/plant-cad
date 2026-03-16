@@ -5,7 +5,9 @@ use crate::{
     classify_point_in_solid,
     BopDs,
     BopError,
+    BooleanOp,
     FaceId,
+    PointClassification,
     SectionCurveId,
 };
 use truck_base::cgmath64::{MetricSpace, Point2, Point3};
@@ -116,6 +118,33 @@ where
     }
 
     Ok(classified)
+}
+
+/// Selects classified split-face fragments according to the requested boolean operation.
+pub fn select_split_faces_for_boolean_op(
+    bopds: &BopDs,
+    operation: BooleanOp,
+) -> Vec<SplitFace> {
+    bopds
+        .split_faces()
+        .iter()
+        .filter(|split_face| should_select_split_face(split_face, operation))
+        .cloned()
+        .collect()
+}
+
+fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> bool {
+    let Some(classification) = split_face.classification else {
+        return false;
+    };
+
+    match operation {
+        BooleanOp::Common => matches!(classification, PointClassification::Inside | PointClassification::OnBoundary),
+        BooleanOp::Fuse => matches!(classification, PointClassification::Outside | PointClassification::OnBoundary),
+        BooleanOp::Cut => split_face.operand_rank == 0
+            && matches!(classification, PointClassification::Outside | PointClassification::OnBoundary),
+        BooleanOp::Section => false,
+    }
 }
 
 fn build_loops_for_face<C, S>(
@@ -905,7 +934,7 @@ mod tests {
         assert_eq!(classified, 1);
         let fragment = &bopds.split_faces()[0];
         assert_eq!(fragment.representative_point, Some(Point3::new(0.5, 0.5, 0.0)));
-        assert_eq!(fragment.classification, Some(crate::PointClassification::Inside));
+        assert_eq!(fragment.classification, Some(PointClassification::Inside));
     }
 
     #[test]
@@ -929,7 +958,7 @@ mod tests {
 
         let fragment = &bopds.split_faces()[0];
         assert_eq!(fragment.representative_point, Some(Point3::new(1.0, 1.0, 0.0)));
-        assert_eq!(fragment.classification, Some(crate::PointClassification::Outside));
+        assert_eq!(fragment.classification, Some(PointClassification::Outside));
     }
 
     #[test]
@@ -950,6 +979,93 @@ mod tests {
         assert_eq!(classified, 0);
         assert_eq!(bopds.split_faces()[0].representative_point, None);
         assert_eq!(bopds.split_faces()[0].classification, None);
+    }
+
+    #[test]
+    fn boolean_selection_common_selects_inside_and_boundary_fragments() {
+        let bopds = bopds_with_classified_fragments(vec![
+            (0, PointClassification::Inside),
+            (0, PointClassification::OnBoundary),
+            (1, PointClassification::Outside),
+        ]);
+
+        let selected = select_split_faces_for_boolean_op(&bopds, BooleanOp::Common);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].classification, Some(PointClassification::Inside));
+        assert_eq!(selected[1].classification, Some(PointClassification::OnBoundary));
+    }
+
+    #[test]
+    fn boolean_selection_fuse_selects_outside_and_boundary_fragments_from_both_operands() {
+        let bopds = bopds_with_classified_fragments(vec![
+            (0, PointClassification::Outside),
+            (0, PointClassification::Inside),
+            (1, PointClassification::OnBoundary),
+            (1, PointClassification::Outside),
+        ]);
+
+        let selected = select_split_faces_for_boolean_op(&bopds, BooleanOp::Fuse);
+
+        assert_eq!(selected.len(), 3);
+        assert_eq!(selected[0].operand_rank, 0);
+        assert_eq!(selected[0].classification, Some(PointClassification::Outside));
+        assert_eq!(selected[1].operand_rank, 1);
+        assert_eq!(selected[1].classification, Some(PointClassification::OnBoundary));
+        assert_eq!(selected[2].operand_rank, 1);
+        assert_eq!(selected[2].classification, Some(PointClassification::Outside));
+    }
+
+    #[test]
+    fn boolean_selection_cut_selects_only_operand_a_outside_and_boundary_fragments() {
+        let bopds = bopds_with_classified_fragments(vec![
+            (0, PointClassification::Outside),
+            (0, PointClassification::OnBoundary),
+            (0, PointClassification::Inside),
+            (1, PointClassification::Outside),
+            (1, PointClassification::OnBoundary),
+        ]);
+
+        let selected = select_split_faces_for_boolean_op(&bopds, BooleanOp::Cut);
+
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().all(|split_face| split_face.operand_rank == 0));
+        assert_eq!(selected[0].classification, Some(PointClassification::Outside));
+        assert_eq!(selected[1].classification, Some(PointClassification::OnBoundary));
+    }
+
+    #[test]
+    fn boolean_selection_skips_unclassified_fragments() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        bopds.push_split_face(SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![outer_loop(face_id, square_loop(0.0, 1.0))],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: None,
+        });
+
+        let selected = select_split_faces_for_boolean_op(&bopds, BooleanOp::Fuse);
+
+        assert!(selected.is_empty());
+    }
+
+    fn bopds_with_classified_fragments(classifications: Vec<(u8, PointClassification)>) -> BopDs {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        for (index, (operand_rank, classification)) in classifications.into_iter().enumerate() {
+            let face_id = bopds.register_face_source(operand_rank);
+            bopds.push_split_face(SplitFace {
+                original_face: face_id,
+                operand_rank,
+                trimming_loops: vec![outer_loop(face_id, square_loop(index as f64, index as f64 + 1.0))],
+                splitting_edges: vec![],
+                representative_point: Some(Point3::new(index as f64 + 0.5, 0.5, 0.0)),
+                classification: Some(classification),
+            });
+        }
+        bopds
     }
 
     fn unit_square_face() -> Face<Point3, Curve, Surface> {
