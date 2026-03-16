@@ -3,6 +3,17 @@
 use crate::{EdgeId, FaceId, PointClassification, SectionCurveId, VertexId};
 use truck_base::cgmath64::Point2;
 
+/// A merged vertex cluster built from selected fragments.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergedVertex {
+    /// Canonical vertex identifier representing the merged cluster.
+    pub id: VertexId,
+    /// Source vertices absorbed into this merged vertex.
+    pub original_vertices: Vec<VertexId>,
+    /// Canonical merged location in model space.
+    pub point: truck_base::cgmath64::Point3,
+}
+
 /// A face fragment created while splitting a source face.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplitFace {
@@ -34,6 +45,8 @@ pub struct TrimmingEdge {
 pub struct TrimmingLoop {
     /// Source face that owns this loop.
     pub face: FaceId,
+    /// Fragment-local vertex identifiers aligned with the loop polyline.
+    pub vertex_ids: Vec<VertexId>,
     /// Ordered edges forming the loop.
     pub edges: Vec<TrimmingEdge>,
     /// Flattened closed polyline; first point equals last point within tolerance.
@@ -152,6 +165,8 @@ pub struct InterferenceTable {
     pub trimming_loops: Vec<TrimmingLoop>,
     /// Split face fragments with provenance information.
     pub split_faces: Vec<SplitFace>,
+    /// Vertex clusters merged during topology rebuild.
+    pub merged_vertices: Vec<MergedVertex>,
 }
 
 impl InterferenceTable {
@@ -200,6 +215,11 @@ impl InterferenceTable {
         self.split_faces.push(split_face);
     }
 
+    /// Store a merged vertex cluster.
+    pub fn push_merged_vertex(&mut self, merged_vertex: MergedVertex) {
+        self.merged_vertices.push(merged_vertex);
+    }
+
     /// Borrow all vertex-vertex interferences.
     pub fn vv(&self) -> &[VVInterference] {
         &self.vv
@@ -243,6 +263,11 @@ impl InterferenceTable {
     /// Borrow all split face fragments.
     pub fn split_faces(&self) -> &[SplitFace] {
         &self.split_faces
+    }
+
+    /// Borrow all merged vertex clusters.
+    pub fn merged_vertices(&self) -> &[MergedVertex] {
+        &self.merged_vertices
     }
 }
 
@@ -351,6 +376,7 @@ mod tests {
         let mut table = InterferenceTable::default();
         let trimming_loop = TrimmingLoop {
             face: FaceId(1),
+            vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(2)),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
@@ -374,6 +400,7 @@ mod tests {
         let mut table = InterferenceTable::default();
         let loop_record = TrimmingLoop {
             face: FaceId(1),
+            vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(2)),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
@@ -398,5 +425,19 @@ mod tests {
         table.push_split_face(split_face.clone());
 
         assert_eq!(table.split_faces(), &[split_face]);
+    }
+
+    #[test]
+    fn stores_merged_vertex_records() {
+        let mut table = InterferenceTable::default();
+        let merged = MergedVertex {
+            id: VertexId(9),
+            original_vertices: vec![VertexId(9), VertexId(11)],
+            point: truck_base::cgmath64::Point3::new(1.0, 2.0, 3.0),
+        };
+
+        table.push_merged_vertex(merged.clone());
+
+        assert_eq!(table.merged_vertices(), &[merged]);
     }
 }

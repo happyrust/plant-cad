@@ -1,7 +1,7 @@
 //! Face trimming loop construction.
 
 use crate::{
-    bopds::{SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop},
+    bopds::{MergedVertex, SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop},
     classify_point_in_solid,
     BopDs,
     BopError,
@@ -9,7 +9,9 @@ use crate::{
     FaceId,
     PointClassification,
     SectionCurveId,
+    VertexId,
 };
+use rustc_hash::FxHashMap;
 use truck_base::cgmath64::{MetricSpace, Point2, Point3};
 use truck_geotrait::{D2, Invertible, SearchParameter};
 use truck_topology::{Face, Solid};
@@ -133,6 +135,62 @@ pub fn select_split_faces_for_boolean_op(
         .collect()
 }
 
+/// Merges equivalent vertices from the selected fragments and returns an original-to-canonical map.
+pub fn merge_equivalent_vertices(
+    bopds: &mut BopDs,
+    split_faces: &[SplitFace],
+) -> FxHashMap<VertexId, VertexId> {
+    let tolerance = bopds.options().geometric_tol;
+    let mut samples = collect_fragment_vertices(split_faces);
+    samples.sort_by(|lhs, rhs| {
+        lhs.1.x
+            .total_cmp(&rhs.1.x)
+            .then(lhs.1.y.total_cmp(&rhs.1.y))
+            .then(lhs.1.z.total_cmp(&rhs.1.z))
+            .then(lhs.0.cmp(&rhs.0))
+    });
+
+    bopds.clear_merged_vertices();
+
+    let mut equivalence = FxHashMap::default();
+    let mut merged_vertices = Vec::new();
+    for (vertex_id, point) in &samples {
+        if equivalence.contains_key(vertex_id) {
+            continue;
+        }
+
+        let mut cluster = vec![(*vertex_id, *point)];
+        for (candidate_id, candidate_point) in &samples {
+            if equivalence.contains_key(candidate_id) || *candidate_id == *vertex_id {
+                continue;
+            }
+            if point.distance(*candidate_point) <= tolerance {
+                cluster.push((*candidate_id, *candidate_point));
+            }
+        }
+
+        cluster.sort_by_key(|(id, _)| *id);
+        let canonical = cluster[0].0;
+        let merged_point = average_point(cluster.iter().map(|(_, cluster_point)| *cluster_point));
+        let original_vertices = cluster.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        for original in &original_vertices {
+            equivalence.insert(*original, canonical);
+        }
+        merged_vertices.push(MergedVertex {
+            id: canonical,
+            original_vertices,
+            point: merged_point,
+        });
+    }
+
+    merged_vertices.sort_by_key(|merged| merged.id);
+    for merged in merged_vertices {
+        bopds.push_merged_vertex(merged);
+    }
+
+    equivalence
+}
+
 fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> bool {
     let Some(classification) = split_face.classification else {
         return false;
@@ -150,6 +208,40 @@ fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> boo
         }
         BooleanOp::Section => false,
     }
+}
+
+fn collect_fragment_vertices(split_faces: &[SplitFace]) -> Vec<(VertexId, Point3)> {
+    let mut vertices = Vec::new();
+    for split_face in split_faces {
+        for trimming_loop in &split_face.trimming_loops {
+            for (&vertex_id, &point) in trimming_loop.vertex_ids.iter().zip(open_polygon_vertices(&trimming_loop.uv_points).iter()) {
+                vertices.push((vertex_id, uv_to_model_point(point)));
+            }
+        }
+    }
+    vertices.sort_by_key(|(id, _)| *id);
+    vertices.dedup_by_key(|(id, _)| *id);
+    vertices
+}
+
+fn vertex_ids_for_polyline(face_id: FaceId, seed: u32, polyline: &[Point2]) -> Vec<VertexId> {
+    open_polygon_vertices(polyline)
+        .iter()
+        .enumerate()
+        .map(|(index, _)| VertexId(face_id.0 * 10_000 + seed * 100 + index as u32))
+        .collect()
+}
+
+fn average_point(points: impl Iterator<Item = Point3>) -> Point3 {
+    let mut count = 0.0;
+    let mut sum = Point3::new(0.0, 0.0, 0.0);
+    for point in points {
+        sum.x += point.x;
+        sum.y += point.y;
+        sum.z += point.z;
+        count += 1.0;
+    }
+    Point3::new(sum.x / count, sum.y / count, sum.z / count)
 }
 
 fn build_loops_for_face<C, S>(
@@ -249,9 +341,11 @@ fn loop_from_polyline(
     if area.abs() <= tolerance {
         closed = dedup_consecutive_points(closed, tolerance);
     }
+    let vertex_ids = vertex_ids_for_polyline(face_id, 0, &closed);
 
     TrimmingLoop {
         face: face_id,
+        vertex_ids,
         edges,
         signed_area: signed_area(&closed),
         uv_points: closed,
@@ -624,6 +718,7 @@ mod tests {
     fn trimming_loop_reversal_preserves_closed_polyline_and_edge_connectivity() {
         let mut loop_record = TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
             edges: vec![
                 TrimmingEdge {
                     section_curve: Some(SectionCurveId(1)),
@@ -718,6 +813,7 @@ mod tests {
         let second_section = SectionCurveId(12);
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(first_section),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
@@ -734,6 +830,7 @@ mod tests {
         });
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(4), VertexId(5), VertexId(6), VertexId(7)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(second_section),
                 uv_points: vec![Point2::new(2.0, 0.0), Point2::new(3.0, 0.0)],
@@ -750,6 +847,7 @@ mod tests {
         });
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(8), VertexId(9), VertexId(10), VertexId(11)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(99)),
                 uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
@@ -783,6 +881,7 @@ mod tests {
         let hole = SectionCurveId(13);
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(12), VertexId(13), VertexId(14), VertexId(15)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(outer_a),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(4.0, 0.0)],
@@ -799,6 +898,7 @@ mod tests {
         });
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(16), VertexId(17), VertexId(18), VertexId(19)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(outer_b),
                 uv_points: vec![Point2::new(5.0, 0.0), Point2::new(7.0, 0.0)],
@@ -815,6 +915,7 @@ mod tests {
         });
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(20), VertexId(21), VertexId(22), VertexId(23)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(hole),
                 uv_points: vec![Point2::new(1.0, 1.0), Point2::new(2.0, 1.0)],
@@ -847,6 +948,7 @@ mod tests {
         let hole = SectionCurveId(23);
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(24), VertexId(25), VertexId(26), VertexId(27)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(outer),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(6.0, 0.0)],
@@ -863,6 +965,7 @@ mod tests {
         });
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(28), VertexId(29), VertexId(30), VertexId(31)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(nested_outer),
                 uv_points: vec![Point2::new(1.0, 1.0), Point2::new(5.0, 1.0)],
@@ -879,6 +982,7 @@ mod tests {
         });
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(32), VertexId(33), VertexId(34), VertexId(35)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(hole),
                 uv_points: vec![Point2::new(2.0, 2.0), Point2::new(3.0, 2.0)],
@@ -907,6 +1011,7 @@ mod tests {
         let mut bopds = BopDs::with_options(BopOptions::default());
         bopds.push_trimming_loop(TrimmingLoop {
             face: FaceId(0),
+            vertex_ids: vec![VertexId(40), VertexId(41), VertexId(42), VertexId(43)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(7)),
                 uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
@@ -1068,6 +1173,153 @@ mod tests {
         assert!(selected.is_empty());
     }
 
+    #[test]
+    fn vertex_merging_merges_vertices_within_geometric_tolerance() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
+        let face_id = bopds.register_face_source(0);
+        let selected = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(
+                face_id,
+                0,
+                vec![
+                    Point2::new(0.0, 0.0),
+                    Point2::new(1.0, 0.0),
+                    Point2::new(1.0, 1.0),
+                    Point2::new(0.0, 1.0),
+                    Point2::new(0.0, 0.0),
+                ],
+                true,
+            )],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }, SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(
+                face_id,
+                1,
+                vec![
+                    Point2::new(0.0005, 0.0004),
+                    Point2::new(2.0, 0.0),
+                    Point2::new(2.0, 1.0),
+                    Point2::new(0.0004, 1.0003),
+                    Point2::new(0.0005, 0.0004),
+                ],
+                true,
+            )],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }];
+
+        let map = merge_equivalent_vertices(&mut bopds, &selected);
+
+        let origin = selected[0].trimming_loops[0].vertex_ids[0];
+        let near_origin = selected[1].trimming_loops[0].vertex_ids[0];
+        let top_left = selected[0].trimming_loops[0].vertex_ids[3];
+        let near_top_left = selected[1].trimming_loops[0].vertex_ids[3];
+        assert_eq!(map.get(&origin), Some(&origin.min(near_origin)));
+        assert_eq!(map.get(&near_origin), Some(&origin.min(near_origin)));
+        assert_eq!(map.get(&top_left), Some(&top_left.min(near_top_left)));
+        assert_eq!(map.get(&near_top_left), Some(&top_left.min(near_top_left)));
+        assert_eq!(bopds.merged_vertices().len(), 6);
+    }
+
+    #[test]
+    fn vertex_merging_preserves_distinct_vertices_outside_tolerance() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-4,
+            ..BopOptions::default()
+        });
+        let face_id = bopds.register_face_source(0);
+        let selected = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(
+                face_id,
+                0,
+                vec![
+                    Point2::new(0.0, 0.0),
+                    Point2::new(1.0, 0.0),
+                    Point2::new(1.0, 1.0),
+                    Point2::new(0.0, 1.0),
+                    Point2::new(0.0, 0.0),
+                ],
+                true,
+            )],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }, SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(
+                face_id,
+                1,
+                vec![
+                    Point2::new(0.001, 0.0),
+                    Point2::new(2.0, 0.0),
+                    Point2::new(2.0, 1.0),
+                    Point2::new(0.001, 1.0),
+                    Point2::new(0.001, 0.0),
+                ],
+                true,
+            )],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }];
+
+        let map = merge_equivalent_vertices(&mut bopds, &selected);
+
+        let first = selected[0].trimming_loops[0].vertex_ids[0];
+        let second = selected[1].trimming_loops[0].vertex_ids[0];
+        assert_eq!(map.get(&first), Some(&first));
+        assert_eq!(map.get(&second), Some(&second));
+        assert_ne!(map.get(&first), map.get(&second));
+    }
+
+    #[test]
+    fn vertex_merging_rebuilds_equivalence_map_when_re_run() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
+        let face_id = bopds.register_face_source(0);
+        let first = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(face_id, 0, square_loop(0.0, 1.0), true)],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }];
+
+        let first_map = merge_equivalent_vertices(&mut bopds, &first);
+        assert_eq!(bopds.merged_vertices().len(), 4);
+        assert_eq!(first_map.len(), 4);
+
+        let second = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(face_id, 1, square_loop(10.0, 11.0), true)],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Outside),
+        }];
+
+        let second_map = merge_equivalent_vertices(&mut bopds, &second);
+        assert_eq!(bopds.merged_vertices().len(), 4);
+        assert_eq!(second_map.len(), 4);
+        assert!(second_map.keys().all(|id| !first_map.contains_key(id)));
+    }
+
     fn bopds_with_classified_fragments(classifications: Vec<(u8, PointClassification)>) -> BopDs {
         let mut bopds = BopDs::with_options(BopOptions::default());
         for (index, (operand_rank, classification)) in classifications.into_iter().enumerate() {
@@ -1191,23 +1443,22 @@ mod tests {
     }
 
     fn outer_loop(face: FaceId, uv_points: Vec<Point2>) -> TrimmingLoop {
-        TrimmingLoop {
-            face,
-            edges: vec![],
-            uv_points,
-            signed_area: -1.0,
-            is_outer: true,
-        }
+        test_loop(face, 0, uv_points, true)
     }
 
     fn inner_loop(face: FaceId, mut uv_points: Vec<Point2>) -> TrimmingLoop {
         uv_points.reverse();
+        test_loop(face, 1, uv_points, false)
+    }
+
+    fn test_loop(face: FaceId, seed: u32, uv_points: Vec<Point2>, is_outer: bool) -> TrimmingLoop {
         TrimmingLoop {
             face,
+            vertex_ids: vertex_ids_for_polyline(face, seed, &uv_points),
             edges: vec![],
             uv_points,
-            signed_area: 1.0,
-            is_outer: false,
+            signed_area: if is_outer { -1.0 } else { 1.0 },
+            is_outer,
         }
     }
 

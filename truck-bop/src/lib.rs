@@ -23,7 +23,10 @@ mod pipeline;
 mod trim;
 
 pub use bounding::{BoundingProvider, FaceBoundingSurface};
-pub use bopds::{BopDs, CommonBlockId, EdgeId, FaceId, PaveBlock, PaveBlockId, SectionCurveId, ShapeId, SplitFace, VertexId};
+pub use bopds::{
+    BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId,
+    SectionCurveId, ShapeId, SplitFace, VertexId,
+};
 pub use broad_phase::{CandidatePairs, generate_candidate_pairs, generate_candidate_pairs_from_bopds};
 pub use error::BopError;
 pub use intersect::{intersect_ee, intersect_ef, intersect_ff, intersect_ve, intersect_vf, intersect_vv};
@@ -33,6 +36,7 @@ pub use trim::{
     build_split_faces,
     build_trimming_loops,
     classify_split_faces_against_operand,
+    merge_equivalent_vertices,
     select_split_faces_for_boolean_op,
 };
 

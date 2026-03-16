@@ -10,8 +10,9 @@ mod pave_block;
 pub(crate) mod shape_info;
 
 pub use interference::{
-    EEInterference, EFInterference, FFInterference, InterferenceTable, SectionCurve,
-    SplitFace, TrimmingEdge, TrimmingLoop, VEInterference, VFInterference, VVInterference,
+    EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex,
+    SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop, VEInterference, VFInterference,
+    VVInterference,
 };
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
@@ -205,6 +206,11 @@ impl BopDs {
         self.interferences.push_split_face(split_face);
     }
 
+    /// Store a merged vertex cluster.
+    pub fn push_merged_vertex(&mut self, merged_vertex: MergedVertex) {
+        self.interferences.push_merged_vertex(merged_vertex);
+    }
+
     /// Update a split face classification in place.
     pub fn set_split_face_classification(
         &mut self,
@@ -299,6 +305,11 @@ impl BopDs {
         self.interferences.split_faces()
     }
 
+    /// Borrow all merged vertex clusters.
+    pub fn merged_vertices(&self) -> &[MergedVertex] {
+        self.interferences.merged_vertices()
+    }
+
     /// Borrow all stored paves.
     pub fn paves(&self) -> &[Pave] {
         &self.paves
@@ -307,6 +318,11 @@ impl BopDs {
     /// Borrow all stored pave blocks.
     pub fn pave_blocks(&self) -> &[PaveBlock] {
         &self.pave_blocks
+    }
+
+    /// Clear previously computed merged vertex clusters.
+    pub fn clear_merged_vertices(&mut self) {
+        self.interferences.merged_vertices.clear();
     }
 
     fn ensure_edge_endpoints<C>(&mut self, edge_id: EdgeId, edge: &Edge<Point3, C>)
@@ -709,6 +725,7 @@ mod tests {
         let mut ds = BopDs::new();
         let trimming_loop = TrimmingLoop {
             face: FaceId(3),
+            vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(0)),
                 uv_points: vec![
@@ -738,6 +755,7 @@ mod tests {
             operand_rank: 0,
             trimming_loops: vec![TrimmingLoop {
                 face: FaceId(3),
+                vertex_ids: vec![VertexId(1), VertexId(2)],
                 edges: vec![TrimmingEdge {
                     section_curve: Some(SectionCurveId(0)),
                     uv_points: vec![
@@ -761,6 +779,34 @@ mod tests {
         ds.push_split_face(split_face.clone());
 
         assert_eq!(ds.split_faces(), &[split_face]);
+    }
+
+    #[test]
+    fn stores_merged_vertex_records() {
+        let mut ds = BopDs::new();
+        let merged = MergedVertex {
+            id: VertexId(12),
+            original_vertices: vec![VertexId(12), VertexId(14)],
+            point: Point3::new(0.5, 0.5, 0.0),
+        };
+
+        ds.push_merged_vertex(merged.clone());
+
+        assert_eq!(ds.merged_vertices(), &[merged]);
+    }
+
+    #[test]
+    fn clear_merged_vertices_removes_existing_clusters() {
+        let mut ds = BopDs::new();
+        ds.push_merged_vertex(MergedVertex {
+            id: VertexId(1),
+            original_vertices: vec![VertexId(1)],
+            point: Point3::new(0.0, 0.0, 0.0),
+        });
+
+        ds.clear_merged_vertices();
+
+        assert!(ds.merged_vertices().is_empty());
     }
 
     #[test]
