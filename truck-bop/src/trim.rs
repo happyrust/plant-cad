@@ -364,11 +364,20 @@ fn connected_face_components(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
 }
 
 fn component_adjacency(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
+    let topologies = split_faces
+        .iter()
+        .map(rebuilt_face_topology)
+        .collect::<Vec<_>>();
     let mut adjacency = vec![Vec::new(); split_faces.len()];
 
     for left in 0..split_faces.len() {
         for right in (left + 1)..split_faces.len() {
-            if split_faces_share_component(&split_faces[left], &split_faces[right]) {
+            if split_faces_share_component(
+                &split_faces[left],
+                &split_faces[right],
+                &topologies[left],
+                &topologies[right],
+            ) {
                 adjacency[left].push(right);
                 adjacency[right].push(left);
             }
@@ -383,12 +392,26 @@ fn component_adjacency(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     adjacency
 }
 
-fn split_faces_share_component(lhs: &SplitFace, rhs: &SplitFace) -> bool {
-    lhs.trimming_loops.iter().any(|lhs_loop| {
-        rhs.trimming_loops
-            .iter()
-            .any(|rhs_loop| loops_share_boundary(lhs_loop, rhs_loop))
-    })
+fn split_faces_share_component(
+    lhs: &SplitFace,
+    rhs: &SplitFace,
+    lhs_topology: &RebuiltFaceTopology,
+    rhs_topology: &RebuiltFaceTopology,
+) -> bool {
+    if lhs.original_face == rhs.original_face {
+        return false;
+    }
+
+    lhs_topology
+        .shared_edges
+        .iter()
+        .any(|edge| rhs_topology.shared_edges.contains(edge))
+        || lhs.trimming_loops.iter().any(|lhs_loop| {
+            rhs.trimming_loops.iter().any(|rhs_loop| {
+                loops_share_boundary(lhs_loop, rhs_loop)
+                    && loop_shared_boundary_is_topological(lhs_loop, rhs_loop, lhs_topology, rhs_topology)
+            })
+        })
 }
 
 fn loops_share_boundary(lhs: &TrimmingLoop, rhs: &TrimmingLoop) -> bool {
@@ -426,6 +449,12 @@ enum CanonicalRebuiltEdge {
     Boundary(VertexId, VertexId),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RebuiltFaceTopology {
+    shared_edges: Vec<CanonicalRebuiltEdge>,
+    boundary_edges: Vec<CanonicalRebuiltEdge>,
+}
+
 fn canonical_rebuilt_edge(
     edge: &TrimmingEdge,
     start: VertexId,
@@ -437,6 +466,45 @@ fn canonical_rebuilt_edge(
 
     let undirected = undirected_edge_key(start, end);
     CanonicalRebuiltEdge::Boundary(undirected.0, undirected.1)
+}
+
+fn rebuilt_face_topology(split_face: &SplitFace) -> RebuiltFaceTopology {
+    let mut shared_edges = Vec::new();
+    let mut boundary_edges = Vec::new();
+
+    for trimming_loop in &split_face.trimming_loops {
+        for canonical in canonical_loop_edges(trimming_loop) {
+            match canonical {
+                CanonicalRebuiltEdge::Source(_) => {
+                    if !shared_edges.contains(&canonical) {
+                        shared_edges.push(canonical);
+                    }
+                }
+                CanonicalRebuiltEdge::Boundary(_, _) => {
+                    if !boundary_edges.contains(&canonical) {
+                        boundary_edges.push(canonical);
+                    }
+                }
+            }
+        }
+    }
+
+    RebuiltFaceTopology {
+        shared_edges,
+        boundary_edges,
+    }
+}
+
+fn loop_shared_boundary_is_topological(
+    lhs: &TrimmingLoop,
+    rhs: &TrimmingLoop,
+    lhs_topology: &RebuiltFaceTopology,
+    rhs_topology: &RebuiltFaceTopology,
+) -> bool {
+    let _ = rhs;
+    canonical_loop_edges(lhs).into_iter().any(|edge| {
+        lhs_topology.shared_edges.contains(&edge) && rhs_topology.shared_edges.contains(&edge)
+    })
 }
 
 fn shell_faces_reused_original_boundaries<C, S>(
@@ -2406,6 +2474,88 @@ mod tests {
         let components = connected_face_components(&split_faces);
 
         assert_eq!(components, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn canonical_rebuilt_edge_ids_distinguish_shared_and_open_boundaries() {
+        let shared = SectionCurveId(91);
+        let left = SplitFace {
+            original_face: FaceId(0),
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: FaceId(0),
+                vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
+                edges: vec![
+                    line_edge(Some(shared), Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(None, Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)),
+                    line_edge(None, Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)),
+                    line_edge(None, Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)),
+                ],
+                uv_points: square_loop(0.0, 1.0),
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![shared],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+        let right = SplitFace {
+            original_face: FaceId(1),
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: FaceId(1),
+                vertex_ids: vec![VertexId(10), VertexId(11), VertexId(12), VertexId(13)],
+                edges: vec![
+                    line_edge(Some(shared), Point2::new(1.0, 0.0), Point2::new(0.0, 0.0)),
+                    line_edge(None, Point2::new(0.0, 0.0), Point2::new(0.0, -1.0)),
+                    line_edge(None, Point2::new(0.0, -1.0), Point2::new(1.0, -1.0)),
+                    line_edge(None, Point2::new(1.0, -1.0), Point2::new(1.0, 0.0)),
+                ],
+                uv_points: vec![
+                    Point2::new(1.0, 0.0),
+                    Point2::new(0.0, 0.0),
+                    Point2::new(0.0, -1.0),
+                    Point2::new(1.0, -1.0),
+                    Point2::new(1.0, 0.0),
+                ],
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![shared],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+        let open = SplitFace {
+            original_face: FaceId(2),
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: FaceId(2),
+                vertex_ids: vec![VertexId(0), VertexId(1), VertexId(4), VertexId(5)],
+                edges: vec![
+                    line_edge(None, Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(None, Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)),
+                    line_edge(None, Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)),
+                    line_edge(None, Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)),
+                ],
+                uv_points: square_loop(0.0, 1.0),
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+
+        let left_topology = rebuilt_face_topology(&left);
+        let right_topology = rebuilt_face_topology(&right);
+        let open_topology = rebuilt_face_topology(&open);
+
+        assert_eq!(left_topology.shared_edges, vec![CanonicalRebuiltEdge::Source(EdgeId(shared.0))]);
+        assert_eq!(right_topology.shared_edges, vec![CanonicalRebuiltEdge::Source(EdgeId(shared.0))]);
+        assert!(open_topology.shared_edges.is_empty());
+        assert!(left_topology.boundary_edges.contains(&CanonicalRebuiltEdge::Boundary(VertexId(1), VertexId(2))));
+        assert!(!split_faces_share_component(&left, &open, &left_topology, &open_topology));
+        assert!(split_faces_share_component(&left, &right, &left_topology, &right_topology));
     }
 
     #[test]
