@@ -28,3 +28,4 @@ truck-bop follows OCCT's BOPAlgo_PaveFiller and BOPDS_DS architecture:
 - **Face Splitting**: UV projection, trimming loops
 - **Classification**: Ray casting for point-in-solid
 - **Topology Rebuild**: Vertex merging, edge sewing, shell assembly
+- **Topology rebuild invariant**: downstream shell reconstruction must operate on fragment-level trimming data, not just `SplitFace.original_face`, because multiple selected fragments can originate from one source face after splitting.
