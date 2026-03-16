@@ -28,7 +28,7 @@ pub use broad_phase::{CandidatePairs, generate_candidate_pairs, generate_candida
 pub use error::BopError;
 pub use intersect::{intersect_ee, intersect_ef, intersect_ff, intersect_ve, intersect_vf, intersect_vv};
 pub use options::BopOptions;
-pub use pipeline::BooleanOp;
+pub use pipeline::{BooleanOp, PointClassification, classify_point_in_solid};
 pub use trim::{build_split_faces, build_trimming_loops};
 
 /// Common (intersection) operation stub
