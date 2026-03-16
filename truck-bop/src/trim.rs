@@ -141,8 +141,13 @@ fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> boo
     match operation {
         BooleanOp::Common => matches!(classification, PointClassification::Inside | PointClassification::OnBoundary),
         BooleanOp::Fuse => matches!(classification, PointClassification::Outside | PointClassification::OnBoundary),
-        BooleanOp::Cut => split_face.operand_rank == 0
-            && matches!(classification, PointClassification::Outside | PointClassification::OnBoundary),
+        BooleanOp::Cut => {
+            if split_face.operand_rank == 0 {
+                matches!(classification, PointClassification::Outside | PointClassification::OnBoundary)
+            } else {
+                matches!(classification, PointClassification::OnBoundary)
+            }
+        }
         BooleanOp::Section => false,
     }
 }
@@ -344,18 +349,17 @@ fn collect_splitting_edges(trimming_loops: &[TrimmingLoop]) -> Vec<SectionCurveI
 
 fn representative_point(split_face: &SplitFace) -> Option<Point3> {
     let outer_loop = split_face.trimming_loops.iter().find(|loop_| loop_.is_outer)?;
+    let inner_loops: Vec<_> = split_face.trimming_loops.iter().filter(|loop_| !loop_.is_outer).cloned().collect();
 
-    loop_representative_point(outer_loop, &[]).or_else(|| {
-        split_face
-            .trimming_loops
+    loop_representative_point(outer_loop, &inner_loops).or_else(|| {
+        inner_loops
             .iter()
-            .filter(|trimming_loop| !trimming_loop.is_outer)
             .find_map(|trimming_loop| loop_representative_point(trimming_loop, &[]))
     })
 }
 
 fn loop_representative_point(trimming_loop: &TrimmingLoop, fragment_loops: &[TrimmingLoop]) -> Option<Point3> {
-    loop_bbox_center(&trimming_loop.uv_points)
+    loop_centroid(&trimming_loop.uv_points)
         .filter(|point| point_in_fragment_region(fragment_loops, *point))
         .map(uv_to_model_point)
         .or_else(|| {
@@ -368,22 +372,31 @@ fn loop_representative_point(trimming_loop: &TrimmingLoop, fragment_loops: &[Tri
         .or_else(|| loop_interior_sample_point(trimming_loop, fragment_loops).map(uv_to_model_point))
 }
 
-fn loop_bbox_center(loop_points: &[Point2]) -> Option<Point2> {
+fn loop_centroid(loop_points: &[Point2]) -> Option<Point2> {
     let vertices = open_polygon_vertices(loop_points);
-    if vertices.is_empty() {
+    if vertices.len() < 3 {
         return None;
     }
 
-    let (min_x, max_x) = vertices
-        .iter()
-        .map(|point| point.x)
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), x| (min.min(x), max.max(x)));
-    let (min_y, max_y) = vertices
-        .iter()
-        .map(|point| point.y)
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), y| (min.min(y), max.max(y)));
+    let mut area = 0.0;
+    let mut cx = 0.0;
+    let mut cy = 0.0;
 
-    Some(Point2::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5))
+    for i in 0..vertices.len() {
+        let curr = vertices[i];
+        let next = vertices[(i + 1) % vertices.len()];
+        let cross = curr.x * next.y - next.x * curr.y;
+        area += cross;
+        cx += (curr.x + next.x) * cross;
+        cy += (curr.y + next.y) * cross;
+    }
+
+    if area.abs() < 1e-10 {
+        return None;
+    }
+
+    area *= 0.5;
+    Some(Point2::new(cx / (6.0 * area), cy / (6.0 * area)))
 }
 
 fn loop_interior_sample_point(trimming_loop: &TrimmingLoop, fragment_loops: &[TrimmingLoop]) -> Option<Point2> {
@@ -1028,10 +1041,13 @@ mod tests {
 
         let selected = select_split_faces_for_boolean_op(&bopds, BooleanOp::Cut);
 
-        assert_eq!(selected.len(), 2);
-        assert!(selected.iter().all(|split_face| split_face.operand_rank == 0));
+        assert_eq!(selected.len(), 3);
+        assert_eq!(selected[0].operand_rank, 0);
         assert_eq!(selected[0].classification, Some(PointClassification::Outside));
+        assert_eq!(selected[1].operand_rank, 0);
         assert_eq!(selected[1].classification, Some(PointClassification::OnBoundary));
+        assert_eq!(selected[2].operand_rank, 1);
+        assert_eq!(selected[2].classification, Some(PointClassification::OnBoundary));
     }
 
     #[test]

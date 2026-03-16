@@ -158,11 +158,11 @@ where
 }
 
 fn point_on_box_boundary(point: Point3, bounds: &BoundingBox<Point3>, tolerance: f64) -> bool {
-    let inside_or_on = (0..3).all(|axis| {
+    let inside = (0..3).all(|axis| {
         let value = axis_value(point, axis);
-        value >= axis_min(bounds, axis) - tolerance && value <= axis_max(bounds, axis) + tolerance
+        value >= axis_min(bounds, axis) && value <= axis_max(bounds, axis)
     });
-    if !inside_or_on {
+    if !inside {
         return false;
     }
 
