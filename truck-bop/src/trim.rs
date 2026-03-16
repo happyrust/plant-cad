@@ -1,9 +1,16 @@
 //! Face trimming loop construction.
 
-use crate::{bopds::{SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop}, BopDs, FaceId, SectionCurveId};
+use crate::{
+    bopds::{SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop},
+    classify_point_in_solid,
+    BopDs,
+    BopError,
+    FaceId,
+    SectionCurveId,
+};
 use truck_base::cgmath64::{MetricSpace, Point2, Point3};
 use truck_geotrait::{D2, Invertible, SearchParameter};
-use truck_topology::Face;
+use truck_topology::{Face, Solid};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
 
@@ -56,8 +63,13 @@ pub fn build_split_faces(bopds: &mut BopDs) -> usize {
             let splitting_edges = collect_splitting_edges(&trimming_loops);
             SplitFace {
                 original_face: outer_loop.face,
+                operand_rank: bopds
+                    .face_shape_info(outer_loop.face)
+                    .map_or(0, |shape_info| shape_info.operand_rank),
                 trimming_loops,
                 splitting_edges,
+                representative_point: None,
+                classification: None,
             }
         })
         .collect();
@@ -67,6 +79,43 @@ pub fn build_split_faces(bopds: &mut BopDs) -> usize {
     }
 
     split_faces.len()
+}
+
+/// Classifies stored split-face fragments against the opposite operand solid.
+pub fn classify_split_faces_against_operand<C, S>(
+    bopds: &mut BopDs,
+    solids_by_operand: &[(u8, Solid<Point3, C, S>)],
+) -> Result<usize, BopError>
+where
+    C: Clone,
+    S: Clone,
+{
+    let split_faces = bopds.split_faces().to_vec();
+    let mut classified = 0;
+
+    for (index, split_face) in split_faces.iter().enumerate() {
+        let opposite_rank = match split_face.operand_rank {
+            0 => 1,
+            1 => 0,
+            _ => continue,
+        };
+
+        let Some((_, solid)) = solids_by_operand.iter().find(|(rank, _)| *rank == opposite_rank) else {
+            continue;
+        };
+
+        let representative_point = representative_point(split_face)
+            .ok_or(BopError::UnsupportedGeometry)?;
+        let classification = classify_point_in_solid(
+            solid,
+            representative_point,
+            bopds.options().geometric_tol,
+        )?;
+        bopds.set_split_face_classification(index, representative_point, classification);
+        classified += 1;
+    }
+
+    Ok(classified)
 }
 
 fn build_loops_for_face<C, S>(
@@ -264,6 +313,81 @@ fn collect_splitting_edges(trimming_loops: &[TrimmingLoop]) -> Vec<SectionCurveI
     splitting_edges
 }
 
+fn representative_point(split_face: &SplitFace) -> Option<Point3> {
+    let outer_loop = split_face.trimming_loops.iter().find(|loop_| loop_.is_outer)?;
+
+    loop_representative_point(outer_loop, &[]).or_else(|| {
+        split_face
+            .trimming_loops
+            .iter()
+            .filter(|trimming_loop| !trimming_loop.is_outer)
+            .find_map(|trimming_loop| loop_representative_point(trimming_loop, &[]))
+    })
+}
+
+fn loop_representative_point(trimming_loop: &TrimmingLoop, fragment_loops: &[TrimmingLoop]) -> Option<Point3> {
+    loop_bbox_center(&trimming_loop.uv_points)
+        .filter(|point| point_in_fragment_region(fragment_loops, *point))
+        .map(uv_to_model_point)
+        .or_else(|| {
+            open_polygon_vertices(&trimming_loop.uv_points)
+                .iter()
+                .copied()
+                .find(|point| point_in_fragment_region(fragment_loops, *point))
+                .map(uv_to_model_point)
+        })
+        .or_else(|| loop_interior_sample_point(trimming_loop, fragment_loops).map(uv_to_model_point))
+}
+
+fn loop_bbox_center(loop_points: &[Point2]) -> Option<Point2> {
+    let vertices = open_polygon_vertices(loop_points);
+    if vertices.is_empty() {
+        return None;
+    }
+
+    let (min_x, max_x) = vertices
+        .iter()
+        .map(|point| point.x)
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), x| (min.min(x), max.max(x)));
+    let (min_y, max_y) = vertices
+        .iter()
+        .map(|point| point.y)
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), y| (min.min(y), max.max(y)));
+
+    Some(Point2::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5))
+}
+
+fn loop_interior_sample_point(trimming_loop: &TrimmingLoop, fragment_loops: &[TrimmingLoop]) -> Option<Point2> {
+    let vertices = open_polygon_vertices(&trimming_loop.uv_points);
+    if vertices.len() < 2 {
+        return None;
+    }
+    for start in 0..vertices.len() {
+        for end in (start + 1)..vertices.len() {
+            let midpoint = Point2::new(
+                (vertices[start].x + vertices[end].x) * 0.5,
+                (vertices[start].y + vertices[end].y) * 0.5,
+            );
+            if point_in_fragment_region(fragment_loops, midpoint) {
+                return Some(midpoint);
+            }
+        }
+    }
+    None
+}
+
+fn point_in_loop_region(trimming_loop: &TrimmingLoop, point: Point2) -> bool {
+    !point_on_polygon_boundary(&trimming_loop.uv_points, point) && point_in_polygon(&trimming_loop.uv_points, point)
+}
+
+fn point_in_fragment_region(fragment_loops: &[TrimmingLoop], point: Point2) -> bool {
+    fragment_loops.is_empty() || fragment_loops.iter().any(|trimming_loop| point_in_loop_region(trimming_loop, point))
+}
+
+fn uv_to_model_point(point: Point2) -> Point3 {
+    Point3::new(point.x, point.y, 0.0)
+}
+
 fn loop_contained_by(inner: &TrimmingLoop, outer: &TrimmingLoop) -> bool {
     polygon_centroid(&inner.uv_points)
         .filter(|point| !point_on_polygon_boundary(&outer.uv_points, *point))
@@ -366,8 +490,9 @@ fn point_on_segment(start: Point2, end: Point2, point: Point2) -> bool {
 mod tests {
     use super::*;
     use crate::{bopds::SectionCurve, BopOptions, VertexId};
-    use truck_modeling::{builder, Curve, Surface};
-    use truck_topology::Wire;
+    use truck_base::bounding_box::BoundingBox;
+    use truck_modeling::{builder, primitive, Curve, Surface};
+    use truck_topology::{Wire, Solid};
 
     #[test]
     fn trimming_loop_construction_uses_face_boundary_as_outer_loop() {
@@ -761,6 +886,72 @@ mod tests {
         assert!(bopds.split_faces().is_empty());
     }
 
+    #[test]
+    fn fragment_classification_uses_loop_centroid_when_it_is_inside_fragment() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        bopds.push_split_face(SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![outer_loop(face_id, square_loop(0.25, 0.75))],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: None,
+        });
+
+        let opposite = operand_box(1, Point3::new(0.0, 0.0, -1.0), Point3::new(1.0, 1.0, 1.0));
+        let classified = classify_split_faces_against_operand(&mut bopds, &[(1, opposite)]).unwrap();
+
+        assert_eq!(classified, 1);
+        let fragment = &bopds.split_faces()[0];
+        assert_eq!(fragment.representative_point, Some(Point3::new(0.5, 0.5, 0.0)));
+        assert_eq!(fragment.classification, Some(crate::PointClassification::Inside));
+    }
+
+    #[test]
+    fn fragment_classification_falls_back_to_sample_point_when_centroid_is_in_hole() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        bopds.push_split_face(SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![
+                outer_loop(face_id, square_loop(0.0, 2.0)),
+                inner_loop(face_id, square_loop(0.5, 1.5)),
+            ],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: None,
+        });
+
+        let opposite = operand_box(1, Point3::new(-1.0, -1.0, -1.0), Point3::new(0.25, 0.25, 1.0));
+        classify_split_faces_against_operand(&mut bopds, &[(1, opposite)]).unwrap();
+
+        let fragment = &bopds.split_faces()[0];
+        assert_eq!(fragment.representative_point, Some(Point3::new(1.0, 1.0, 0.0)));
+        assert_eq!(fragment.classification, Some(crate::PointClassification::Outside));
+    }
+
+    #[test]
+    fn fragment_classification_skips_unpaired_operand_fragments() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(2);
+        bopds.push_split_face(SplitFace {
+            original_face: face_id,
+            operand_rank: 2,
+            trimming_loops: vec![outer_loop(face_id, square_loop(0.0, 1.0))],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: None,
+        });
+
+        let classified = classify_split_faces_against_operand(&mut bopds, &[(0, operand_box(0, Point3::new(0.0, 0.0, -1.0), Point3::new(1.0, 1.0, 1.0)))]).unwrap();
+
+        assert_eq!(classified, 0);
+        assert_eq!(bopds.split_faces()[0].representative_point, None);
+        assert_eq!(bopds.split_faces()[0].classification, None);
+    }
+
     fn unit_square_face() -> Face<Point3, Curve, Surface> {
         square_face(
             [
@@ -855,5 +1046,41 @@ mod tests {
             ],
             face_projection_available: [(FaceId(0), true), (FaceId(1), true)],
         }
+    }
+
+    fn square_loop(min: f64, max: f64) -> Vec<Point2> {
+        vec![
+            Point2::new(min, min),
+            Point2::new(max, min),
+            Point2::new(max, max),
+            Point2::new(min, max),
+            Point2::new(min, min),
+        ]
+    }
+
+    fn outer_loop(face: FaceId, uv_points: Vec<Point2>) -> TrimmingLoop {
+        TrimmingLoop {
+            face,
+            edges: vec![],
+            uv_points,
+            signed_area: -1.0,
+            is_outer: true,
+        }
+    }
+
+    fn inner_loop(face: FaceId, mut uv_points: Vec<Point2>) -> TrimmingLoop {
+        uv_points.reverse();
+        TrimmingLoop {
+            face,
+            edges: vec![],
+            uv_points,
+            signed_area: 1.0,
+            is_outer: false,
+        }
+    }
+
+    fn operand_box(rank: u8, min: Point3, max: Point3) -> Solid<Point3, Curve, Surface> {
+        let _ = rank;
+        primitive::cuboid(BoundingBox::from_iter([min, max]))
     }
 }
