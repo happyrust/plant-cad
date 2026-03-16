@@ -11,7 +11,8 @@ pub(crate) mod shape_info;
 
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex,
-    SectionCurve, SewnEdge, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop,
+    SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
+    TrimmingLoop,
     VEInterference, VFInterference, VVInterference,
 };
 pub use ids::{
@@ -829,6 +830,12 @@ mod tests {
         let mut ds = BopDs::new();
         ds.push_sewn_path(SewnPath {
             edges: vec![SewnEdge {
+                source: SewnEdgeSource {
+                    face: FaceId(0),
+                    loop_index: 0,
+                    edge_index: 0,
+                    original_edge: Some(EdgeId(11)),
+                },
                 face: FaceId(0),
                 loop_index: 0,
                 edge_index: 0,
@@ -836,6 +843,20 @@ mod tests {
                 end_vertex: VertexId(2),
                 reversed: false,
                 section_curve: None,
+                sewn_pair: Some(SewnEdgePair::new(
+                    SewnEdgeSource {
+                        face: FaceId(0),
+                        loop_index: 0,
+                        edge_index: 0,
+                        original_edge: Some(EdgeId(11)),
+                    },
+                    SewnEdgeSource {
+                        face: FaceId(1),
+                        loop_index: 0,
+                        edge_index: 0,
+                        original_edge: Some(EdgeId(12)),
+                    },
+                )),
             }],
             is_closed: true,
         });

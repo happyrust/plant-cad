@@ -1,11 +1,15 @@
 //! Face trimming loop construction.
 
 use crate::{
-    bopds::{MergedVertex, SectionCurve, SewnEdge, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop},
+    bopds::{
+        MergedVertex, SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath,
+        SplitFace, TrimmingEdge, TrimmingLoop,
+    },
     classify_point_in_solid,
     BopDs,
     BopError,
     BooleanOp,
+    EdgeId,
     FaceId,
     PointClassification,
     SectionCurveId,
@@ -322,7 +326,7 @@ fn collect_sewn_edges(
     merged_vertices: &FxHashMap<VertexId, VertexId>,
 ) -> Vec<SewnEdge> {
     let mut edges = Vec::new();
-    let mut shared_counts = FxHashMap::<(VertexId, VertexId), usize>::default();
+    let mut shared_sources = FxHashMap::<(VertexId, VertexId), Vec<SewnEdgeSource>>::default();
 
     for split_face in split_faces {
         for (loop_index, trimming_loop) in split_face.trimming_loops.iter().enumerate() {
@@ -347,9 +351,16 @@ fn collect_sewn_edges(
                 let sewn_start = merged_vertices.get(&start).copied().unwrap_or(start);
                 let sewn_end = merged_vertices.get(&end).copied().unwrap_or(end);
                 let undirected = undirected_edge_key(sewn_start, sewn_end);
-                *shared_counts.entry(undirected).or_default() += 1;
+                let source = SewnEdgeSource {
+                    face: split_face.original_face,
+                    loop_index,
+                    edge_index,
+                    original_edge: edge.section_curve.map(edge_id_from_section_curve),
+                };
+                shared_sources.entry(undirected).or_default().push(source);
                 let reversed = near_points(raw_start, loop_end) && near_points(raw_end, loop_start);
                 edges.push(SewnEdge {
+                    source,
                     face: split_face.original_face,
                     loop_index,
                     edge_index,
@@ -357,14 +368,35 @@ fn collect_sewn_edges(
                     end_vertex: sewn_end,
                     reversed,
                     section_curve: edge.section_curve,
+                    sewn_pair: None,
                 });
             }
         }
     }
 
+    for edge in &mut edges {
+        let undirected = undirected_edge_key(edge.start_vertex, edge.end_vertex);
+        let Some(sources) = shared_sources.get(&undirected) else {
+            continue;
+        };
+
+        if edge.section_curve.is_some() {
+            edge.sewn_pair = sources
+                .iter()
+                .copied()
+                .find(|source| *source != edge.source)
+                .map(|other| SewnEdgePair::new(edge.source, other));
+        } else if sources.len() > 1 {
+            edge.sewn_pair = sources
+                .iter()
+                .copied()
+                .find(|source| *source != edge.source)
+                .map(|other| SewnEdgePair::new(edge.source, other));
+        }
+    }
+
     edges.retain(|edge| {
-        edge.section_curve.is_some()
-            || shared_counts[&undirected_edge_key(edge.start_vertex, edge.end_vertex)] > 1
+        edge.section_curve.is_some() || edge.sewn_pair.is_some()
     });
 
     edges.sort_by(|lhs, rhs| {
@@ -376,6 +408,10 @@ fn collect_sewn_edges(
             .then(lhs.edge_index.cmp(&rhs.edge_index))
     });
     edges
+}
+
+fn edge_id_from_section_curve(section_curve_id: SectionCurveId) -> EdgeId {
+    EdgeId(section_curve_id.0)
 }
 
 fn next_edge_index(edges: &[SewnEdge], used: &[bool], vertex: VertexId) -> Option<usize> {
@@ -1675,6 +1711,12 @@ mod tests {
             .map(|edge| (edge.start_vertex, edge.end_vertex))
             .collect();
         assert_eq!(endpoints, vec![(VertexId(1), VertexId(2)), (VertexId(2), VertexId(1))]);
+        let first_source = paths[0].edges[0].source;
+        let second_source = paths[0].edges[1].source;
+        assert_eq!(first_source.face, face_a);
+        assert_eq!(second_source.face, face_b);
+        assert_eq!(paths[0].edges[0].sewn_pair, Some(SewnEdgePair::new(first_source, second_source)));
+        assert_eq!(paths[0].edges[1].sewn_pair, Some(SewnEdgePair::new(first_source, second_source)));
         assert_eq!(bopds.sewn_paths(), paths.as_slice());
     }
 
@@ -1888,6 +1930,48 @@ mod tests {
             .map(|edge| undirected_edge_key(edge.start_vertex, edge.end_vertex))
             .collect();
         assert_eq!(sewn_pairs, vec![(VertexId(1), VertexId(2)), (VertexId(1), VertexId(2))]);
+        assert_eq!(paths[0].edges[0].source.original_edge, None);
+        assert_eq!(paths[0].edges[1].source.original_edge, None);
+        assert_eq!(paths[0].edges[0].sewn_pair, Some(SewnEdgePair::new(paths[0].edges[0].source, paths[0].edges[1].source)));
+        assert_eq!(paths[0].edges[1].sewn_pair, Some(SewnEdgePair::new(paths[0].edges[0].source, paths[0].edges[1].source)));
+    }
+
+    #[test]
+    fn edge_sewing_tracks_section_edge_identity_for_open_paths() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        let split_faces = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: face_id,
+                vertex_ids: vec![VertexId(70), VertexId(71), VertexId(72)],
+                edges: vec![
+                    line_edge(Some(SectionCurveId(7)), Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(Some(SectionCurveId(8)), Point2::new(1.0, 0.0), Point2::new(2.0, 0.0)),
+                ],
+                uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0), Point2::new(2.0, 0.0)],
+                signed_area: 0.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![SectionCurveId(7), SectionCurveId(8)],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        }];
+
+        let merged = FxHashMap::from_iter([
+            (VertexId(70), VertexId(100)),
+            (VertexId(71), VertexId(101)),
+            (VertexId(72), VertexId(102)),
+        ]);
+
+        let paths = sew_fragment_edges(&mut bopds, &split_faces, &merged);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].edges.len(), 2);
+        assert_eq!(paths[0].edges[0].source.original_edge, Some(EdgeId(7)));
+        assert_eq!(paths[0].edges[1].source.original_edge, Some(EdgeId(8)));
+        assert!(paths[0].edges.iter().all(|edge| edge.sewn_pair.is_none()));
     }
 
     #[test]

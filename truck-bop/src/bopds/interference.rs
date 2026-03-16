@@ -17,6 +17,8 @@ pub struct MergedVertex {
 /// An oriented fragment edge after sewing equivalent endpoints together.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SewnEdge {
+    /// Source trimmed edge identity within the owning fragment.
+    pub source: SewnEdgeSource,
     /// Source face that owns the trimmed edge.
     pub face: FaceId,
     /// Source trimming loop index within the split face.
@@ -31,6 +33,60 @@ pub struct SewnEdge {
     pub reversed: bool,
     /// Optional source section curve identifier when the edge came from a section.
     pub section_curve: Option<SectionCurveId>,
+    /// Counterpart source edge when this edge was sewn to another fragment edge.
+    pub sewn_pair: Option<SewnEdgePair>,
+}
+
+/// Identity of the source trimmed edge that produced a sewn edge record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SewnEdgeSource {
+    /// Source face that owns the trimmed edge.
+    pub face: FaceId,
+    /// Source trimming loop index within the split face.
+    pub loop_index: usize,
+    /// Source edge index within the trimming loop.
+    pub edge_index: usize,
+    /// Optional source topological edge identifier, when available.
+    pub original_edge: Option<EdgeId>,
+}
+
+/// Relation linking two fragment edges that were sewn together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SewnEdgePair {
+    /// Source identity for one sewn fragment edge.
+    pub first: SewnEdgeSource,
+    /// Source identity for the opposing sewn fragment edge.
+    pub second: SewnEdgeSource,
+}
+
+impl SewnEdgePair {
+    /// Creates a deterministic sewn-pair relation independent of input order.
+    pub fn new(first: SewnEdgeSource, second: SewnEdgeSource) -> Self {
+        if first <= second {
+            Self { first, second }
+        } else {
+            Self {
+                first: second,
+                second: first,
+            }
+        }
+    }
+}
+
+impl PartialOrd for SewnEdgeSource {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SewnEdgeSource {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.face
+            .cmp(&other.face)
+            .then(self.loop_index.cmp(&other.loop_index))
+            .then(self.edge_index.cmp(&other.edge_index))
+            .then(self.original_edge.cmp(&other.original_edge))
+    }
 }
 
 /// A continuous oriented boundary assembled from sewn edges.
@@ -486,6 +542,12 @@ mod tests {
         let mut table = InterferenceTable::default();
         let path = SewnPath {
             edges: vec![SewnEdge {
+                source: SewnEdgeSource {
+                    face: FaceId(2),
+                    loop_index: 0,
+                    edge_index: 1,
+                    original_edge: Some(EdgeId(9)),
+                },
                 face: FaceId(2),
                 loop_index: 0,
                 edge_index: 1,
@@ -493,6 +555,20 @@ mod tests {
                 end_vertex: VertexId(5),
                 reversed: false,
                 section_curve: Some(SectionCurveId(8)),
+                sewn_pair: Some(SewnEdgePair::new(
+                    SewnEdgeSource {
+                        face: FaceId(2),
+                        loop_index: 0,
+                        edge_index: 1,
+                        original_edge: Some(EdgeId(9)),
+                    },
+                    SewnEdgeSource {
+                        face: FaceId(3),
+                        loop_index: 1,
+                        edge_index: 0,
+                        original_edge: Some(EdgeId(10)),
+                    },
+                )),
             }],
             is_closed: false,
         };
@@ -500,5 +576,23 @@ mod tests {
         table.push_sewn_path(path.clone());
 
         assert_eq!(table.sewn_paths(), &[path]);
+    }
+
+    #[test]
+    fn sewn_edge_pair_is_order_independent() {
+        let lhs = SewnEdgeSource {
+            face: FaceId(4),
+            loop_index: 2,
+            edge_index: 1,
+            original_edge: Some(EdgeId(12)),
+        };
+        let rhs = SewnEdgeSource {
+            face: FaceId(1),
+            loop_index: 0,
+            edge_index: 3,
+            original_edge: Some(EdgeId(5)),
+        };
+
+        assert_eq!(SewnEdgePair::new(lhs, rhs), SewnEdgePair::new(rhs, lhs));
     }
 }
