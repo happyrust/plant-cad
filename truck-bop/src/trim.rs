@@ -153,21 +153,33 @@ pub fn merge_equivalent_vertices(
 
     bopds.clear_merged_vertices();
 
+    let mut adjacency = vec![Vec::<usize>::new(); samples.len()];
+    for i in 0..samples.len() {
+        for j in (i + 1)..samples.len() {
+            if samples[i].1.distance(samples[j].1) <= tolerance {
+                adjacency[i].push(j);
+                adjacency[j].push(i);
+            }
+        }
+    }
+
     let mut equivalence = FxHashMap::default();
     let mut merged_vertices = Vec::new();
-    for (vertex_id, point) in &samples {
+    let mut visited = vec![false; samples.len()];
+    for (index, (vertex_id, _point)) in samples.iter().enumerate() {
         if equivalence.contains_key(vertex_id) {
             continue;
         }
 
-        let mut cluster = vec![(*vertex_id, *point)];
-        for (candidate_id, candidate_point) in &samples {
-            if equivalence.contains_key(candidate_id) || *candidate_id == *vertex_id {
+        let mut stack = vec![index];
+        let mut cluster = Vec::new();
+        while let Some(current) = stack.pop() {
+            if visited[current] {
                 continue;
             }
-            if point.distance(*candidate_point) <= tolerance {
-                cluster.push((*candidate_id, *candidate_point));
-            }
+            visited[current] = true;
+            cluster.push(samples[current]);
+            stack.extend(adjacency[current].iter().copied());
         }
 
         cluster.sort_by_key(|(id, _)| *id);
@@ -1548,6 +1560,45 @@ mod tests {
         assert_eq!(bopds.merged_vertices().len(), 4);
         assert_eq!(second_map.len(), 4);
         assert!(second_map.keys().all(|id| !first_map.contains_key(id)));
+    }
+
+    #[test]
+    fn vertex_merging_merges_transitive_tolerance_chain() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
+        let face_id = bopds.register_face_source(0);
+        let selected = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![test_loop(
+                face_id,
+                0,
+                vec![
+                    Point2::new(0.0, 0.0),
+                    Point2::new(0.0009, 0.0),
+                    Point2::new(0.0018, 0.0),
+                    Point2::new(0.0018, 1.0),
+                    Point2::new(0.0, 0.0),
+                ],
+                true,
+            )],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }];
+
+        let map = merge_equivalent_vertices(&mut bopds, &selected);
+
+        let a = selected[0].trimming_loops[0].vertex_ids[0];
+        let b = selected[0].trimming_loops[0].vertex_ids[1];
+        let c = selected[0].trimming_loops[0].vertex_ids[2];
+        let canonical = a.min(b).min(c);
+        assert_eq!(map.get(&a), Some(&canonical));
+        assert_eq!(map.get(&b), Some(&canonical));
+        assert_eq!(map.get(&c), Some(&canonical));
+        assert_eq!(bopds.merged_vertices().len(), 2);
     }
 
     #[test]
