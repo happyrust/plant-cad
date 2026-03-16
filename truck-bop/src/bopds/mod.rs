@@ -11,8 +11,8 @@ pub(crate) mod shape_info;
 
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex,
-    SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop, VEInterference, VFInterference,
-    VVInterference,
+    SectionCurve, SewnEdge, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop,
+    VEInterference, VFInterference, VVInterference,
 };
 pub use ids::{
     CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
@@ -211,6 +211,11 @@ impl BopDs {
         self.interferences.push_merged_vertex(merged_vertex);
     }
 
+    /// Store a sewn boundary path.
+    pub fn push_sewn_path(&mut self, sewn_path: SewnPath) {
+        self.interferences.push_sewn_path(sewn_path);
+    }
+
     /// Update a split face classification in place.
     pub fn set_split_face_classification(
         &mut self,
@@ -310,6 +315,11 @@ impl BopDs {
         self.interferences.merged_vertices()
     }
 
+    /// Borrow all sewn boundary paths.
+    pub fn sewn_paths(&self) -> &[SewnPath] {
+        self.interferences.sewn_paths()
+    }
+
     /// Borrow all stored paves.
     pub fn paves(&self) -> &[Pave] {
         &self.paves
@@ -323,6 +333,11 @@ impl BopDs {
     /// Clear previously computed merged vertex clusters.
     pub fn clear_merged_vertices(&mut self) {
         self.interferences.merged_vertices.clear();
+    }
+
+    /// Clear previously computed sewn boundary paths.
+    pub fn clear_sewn_paths(&mut self) {
+        self.interferences.sewn_paths.clear();
     }
 
     fn ensure_edge_endpoints<C>(&mut self, edge_id: EdgeId, edge: &Edge<Point3, C>)
@@ -807,6 +822,27 @@ mod tests {
         ds.clear_merged_vertices();
 
         assert!(ds.merged_vertices().is_empty());
+    }
+
+    #[test]
+    fn clear_sewn_paths_removes_existing_paths() {
+        let mut ds = BopDs::new();
+        ds.push_sewn_path(SewnPath {
+            edges: vec![SewnEdge {
+                face: FaceId(0),
+                loop_index: 0,
+                edge_index: 0,
+                start_vertex: VertexId(1),
+                end_vertex: VertexId(2),
+                reversed: false,
+                section_curve: None,
+            }],
+            is_closed: true,
+        });
+
+        ds.clear_sewn_paths();
+
+        assert!(ds.sewn_paths().is_empty());
     }
 
     #[test]

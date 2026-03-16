@@ -1,7 +1,7 @@
 //! Face trimming loop construction.
 
 use crate::{
-    bopds::{MergedVertex, SectionCurve, SplitFace, TrimmingEdge, TrimmingLoop},
+    bopds::{MergedVertex, SectionCurve, SewnEdge, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop},
     classify_point_in_solid,
     BopDs,
     BopError,
@@ -189,6 +189,106 @@ pub fn merge_equivalent_vertices(
     }
 
     equivalence
+}
+
+/// Reconnects fragment edges with matching merged endpoints into continuous oriented paths.
+pub fn sew_fragment_edges(
+    bopds: &mut BopDs,
+    split_faces: &[SplitFace],
+    merged_vertices: &FxHashMap<VertexId, VertexId>,
+) -> Vec<SewnPath> {
+    let edges = collect_sewn_edges(split_faces, merged_vertices);
+    let mut paths = Vec::new();
+    let mut used = vec![false; edges.len()];
+
+    bopds.clear_sewn_paths();
+
+    while let Some(start_index) = used.iter().position(|used_edge| !*used_edge) {
+        used[start_index] = true;
+        let mut path = vec![edges[start_index].clone()];
+        let start_vertex = edges[start_index].start_vertex;
+        let mut tail_vertex = edges[start_index].end_vertex;
+
+        while let Some(next_index) = next_edge_index(&edges, &used, tail_vertex) {
+            let mut next_edge = edges[next_index].clone();
+            if next_edge.start_vertex != tail_vertex {
+                std::mem::swap(&mut next_edge.start_vertex, &mut next_edge.end_vertex);
+                next_edge.reversed = !next_edge.reversed;
+            }
+            tail_vertex = next_edge.end_vertex;
+            used[next_index] = true;
+            path.push(next_edge);
+        }
+
+        let sewn_path = SewnPath {
+            is_closed: tail_vertex == start_vertex,
+            edges: path,
+        };
+        bopds.push_sewn_path(sewn_path.clone());
+        paths.push(sewn_path);
+    }
+
+    paths
+}
+
+fn collect_sewn_edges(
+    split_faces: &[SplitFace],
+    merged_vertices: &FxHashMap<VertexId, VertexId>,
+) -> Vec<SewnEdge> {
+    let mut edges = Vec::new();
+
+    for split_face in split_faces {
+        for (loop_index, trimming_loop) in split_face.trimming_loops.iter().enumerate() {
+            let vertices = open_loop_vertex_ids(trimming_loop);
+            if vertices.len() < 2 {
+                continue;
+            }
+
+            for (edge_index, edge) in trimming_loop.edges.iter().enumerate() {
+                let start = vertices[edge_index];
+                let end = vertices[(edge_index + 1) % vertices.len()];
+                edges.push(SewnEdge {
+                    face: split_face.original_face,
+                    loop_index,
+                    edge_index,
+                    start_vertex: merged_vertices.get(&start).copied().unwrap_or(start),
+                    end_vertex: merged_vertices.get(&end).copied().unwrap_or(end),
+                    reversed: false,
+                    section_curve: edge.section_curve,
+                });
+            }
+        }
+    }
+
+    edges.sort_by(|lhs, rhs| {
+        lhs.start_vertex
+            .cmp(&rhs.start_vertex)
+            .then(lhs.end_vertex.cmp(&rhs.end_vertex))
+            .then(lhs.face.cmp(&rhs.face))
+            .then(lhs.loop_index.cmp(&rhs.loop_index))
+            .then(lhs.edge_index.cmp(&rhs.edge_index))
+    });
+    edges
+}
+
+fn next_edge_index(edges: &[SewnEdge], used: &[bool], vertex: VertexId) -> Option<usize> {
+    edges
+        .iter()
+        .enumerate()
+        .find(|(index, edge)| !used[*index] && (edge.start_vertex == vertex || edge.end_vertex == vertex))
+        .map(|(index, _)| index)
+}
+
+fn open_loop_vertex_ids(trimming_loop: &TrimmingLoop) -> &[VertexId] {
+    if trimming_loop.vertex_ids.len() >= 2
+        && trimming_loop.uv_points.len() >= 2
+        && trimming_loop.uv_points.first() == trimming_loop.uv_points.last()
+        && trimming_loop.vertex_ids.first() == trimming_loop.vertex_ids.last()
+    {
+        &trimming_loop.vertex_ids[..trimming_loop.vertex_ids.len() - 1]
+    } else {
+        &trimming_loop.vertex_ids
+    }
 }
 
 fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> bool {
@@ -1320,6 +1420,133 @@ mod tests {
         assert!(second_map.keys().all(|id| !first_map.contains_key(id)));
     }
 
+    #[test]
+    fn edge_sewing_identifies_edges_with_same_endpoints() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        let split_faces = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: face_id,
+                vertex_ids: vec![VertexId(10), VertexId(11), VertexId(12), VertexId(13)],
+                edges: vec![
+                    line_edge(None, Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(None, Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)),
+                    line_edge(None, Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)),
+                    line_edge(None, Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)),
+                ],
+                uv_points: square_loop(0.0, 1.0),
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }];
+
+        let merged = FxHashMap::from_iter([
+            (VertexId(10), VertexId(1)),
+            (VertexId(11), VertexId(2)),
+            (VertexId(12), VertexId(3)),
+            (VertexId(13), VertexId(4)),
+        ]);
+
+        let paths = sew_fragment_edges(&mut bopds, &split_faces, &merged);
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].is_closed);
+        assert_eq!(paths[0].edges.len(), 4);
+        let endpoints: Vec<_> = paths[0]
+            .edges
+            .iter()
+            .map(|edge| (edge.start_vertex, edge.end_vertex))
+            .collect();
+        assert_eq!(endpoints, vec![(VertexId(1), VertexId(2)), (VertexId(2), VertexId(3)), (VertexId(3), VertexId(4)), (VertexId(4), VertexId(1))]);
+        assert_eq!(bopds.sewn_paths(), paths.as_slice());
+    }
+
+    #[test]
+    fn edge_sewing_handles_reverse_orientation() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        let split_faces = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: face_id,
+                vertex_ids: vec![VertexId(20), VertexId(21), VertexId(22), VertexId(23)],
+                edges: vec![
+                    line_edge(None, Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(None, Point2::new(1.0, 1.0), Point2::new(1.0, 0.0)),
+                    line_edge(None, Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)),
+                    line_edge(None, Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)),
+                ],
+                uv_points: square_loop(0.0, 1.0),
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::Inside),
+        }];
+
+        let merged = FxHashMap::from_iter([
+            (VertexId(20), VertexId(1)),
+            (VertexId(21), VertexId(2)),
+            (VertexId(22), VertexId(3)),
+            (VertexId(23), VertexId(4)),
+        ]);
+
+        let paths = sew_fragment_edges(&mut bopds, &split_faces, &merged);
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].is_closed);
+        assert!(paths[0].edges[1].reversed);
+        assert_eq!(paths[0].edges[1].start_vertex, VertexId(2));
+        assert_eq!(paths[0].edges[1].end_vertex, VertexId(3));
+    }
+
+    #[test]
+    fn edge_sewing_forms_continuous_open_path() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        let split_faces = vec![SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: face_id,
+                vertex_ids: vec![VertexId(30), VertexId(31), VertexId(32)],
+                edges: vec![
+                    line_edge(Some(SectionCurveId(7)), Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(Some(SectionCurveId(8)), Point2::new(2.0, 0.0), Point2::new(1.0, 0.0)),
+                ],
+                uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0), Point2::new(2.0, 0.0)],
+                signed_area: 0.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![SectionCurveId(7), SectionCurveId(8)],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        }];
+
+        let merged = FxHashMap::from_iter([
+            (VertexId(30), VertexId(100)),
+            (VertexId(31), VertexId(101)),
+            (VertexId(32), VertexId(102)),
+        ]);
+
+        let paths = sew_fragment_edges(&mut bopds, &split_faces, &merged);
+
+        assert_eq!(paths.len(), 1);
+        assert!(!paths[0].is_closed);
+        assert_eq!(paths[0].edges.len(), 2);
+        assert_eq!(paths[0].edges[0].end_vertex, paths[0].edges[1].start_vertex);
+        assert_eq!(paths[0].edges[0].section_curve, Some(SectionCurveId(7)));
+        assert_eq!(paths[0].edges[1].section_curve, Some(SectionCurveId(8)));
+        assert!(paths[0].edges[1].reversed);
+    }
+
     fn bopds_with_classified_fragments(classifications: Vec<(u8, PointClassification)>) -> BopDs {
         let mut bopds = BopDs::with_options(BopOptions::default());
         for (index, (operand_rank, classification)) in classifications.into_iter().enumerate() {
@@ -1440,6 +1667,13 @@ mod tests {
             Point2::new(min, max),
             Point2::new(min, min),
         ]
+    }
+
+    fn line_edge(section_curve: Option<SectionCurveId>, start: Point2, end: Point2) -> TrimmingEdge {
+        TrimmingEdge {
+            section_curve,
+            uv_points: vec![start, end],
+        }
     }
 
     fn outer_loop(face: FaceId, uv_points: Vec<Point2>) -> TrimmingLoop {

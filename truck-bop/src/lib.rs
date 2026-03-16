@@ -25,7 +25,7 @@ mod trim;
 pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use bopds::{
     BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId,
-    SectionCurveId, ShapeId, SplitFace, VertexId,
+    SectionCurveId, SewnEdge, SewnPath, ShapeId, SplitFace, VertexId,
 };
 pub use broad_phase::{CandidatePairs, generate_candidate_pairs, generate_candidate_pairs_from_bopds};
 pub use error::BopError;
@@ -37,6 +37,7 @@ pub use trim::{
     build_trimming_loops,
     classify_split_faces_against_operand,
     merge_equivalent_vertices,
+    sew_fragment_edges,
     select_split_faces_for_boolean_op,
 };
 

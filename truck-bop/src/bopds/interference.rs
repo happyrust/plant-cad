@@ -14,6 +14,34 @@ pub struct MergedVertex {
     pub point: truck_base::cgmath64::Point3,
 }
 
+/// An oriented fragment edge after sewing equivalent endpoints together.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SewnEdge {
+    /// Source face that owns the trimmed edge.
+    pub face: FaceId,
+    /// Source trimming loop index within the split face.
+    pub loop_index: usize,
+    /// Source edge index within the trimming loop.
+    pub edge_index: usize,
+    /// Canonical start vertex after endpoint merging.
+    pub start_vertex: VertexId,
+    /// Canonical end vertex after endpoint merging.
+    pub end_vertex: VertexId,
+    /// Whether the edge orientation had to be reversed to follow the sewn path.
+    pub reversed: bool,
+    /// Optional source section curve identifier when the edge came from a section.
+    pub section_curve: Option<SectionCurveId>,
+}
+
+/// A continuous oriented boundary assembled from sewn edges.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SewnPath {
+    /// Ordered sewn edges in traversal order.
+    pub edges: Vec<SewnEdge>,
+    /// Whether the path closes back on its start vertex.
+    pub is_closed: bool,
+}
+
 /// A face fragment created while splitting a source face.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplitFace {
@@ -167,6 +195,8 @@ pub struct InterferenceTable {
     pub split_faces: Vec<SplitFace>,
     /// Vertex clusters merged during topology rebuild.
     pub merged_vertices: Vec<MergedVertex>,
+    /// Oriented boundaries reconstructed from sewn fragment edges.
+    pub sewn_paths: Vec<SewnPath>,
 }
 
 impl InterferenceTable {
@@ -220,6 +250,11 @@ impl InterferenceTable {
         self.merged_vertices.push(merged_vertex);
     }
 
+    /// Store a sewn boundary path.
+    pub fn push_sewn_path(&mut self, sewn_path: SewnPath) {
+        self.sewn_paths.push(sewn_path);
+    }
+
     /// Borrow all vertex-vertex interferences.
     pub fn vv(&self) -> &[VVInterference] {
         &self.vv
@@ -268,6 +303,11 @@ impl InterferenceTable {
     /// Borrow all merged vertex clusters.
     pub fn merged_vertices(&self) -> &[MergedVertex] {
         &self.merged_vertices
+    }
+
+    /// Borrow all sewn boundary paths.
+    pub fn sewn_paths(&self) -> &[SewnPath] {
+        &self.sewn_paths
     }
 }
 
@@ -439,5 +479,26 @@ mod tests {
         table.push_merged_vertex(merged.clone());
 
         assert_eq!(table.merged_vertices(), &[merged]);
+    }
+
+    #[test]
+    fn stores_sewn_path_records() {
+        let mut table = InterferenceTable::default();
+        let path = SewnPath {
+            edges: vec![SewnEdge {
+                face: FaceId(2),
+                loop_index: 0,
+                edge_index: 1,
+                start_vertex: VertexId(4),
+                end_vertex: VertexId(5),
+                reversed: false,
+                section_curve: Some(SectionCurveId(8)),
+            }],
+            is_closed: false,
+        };
+
+        table.push_sewn_path(path.clone());
+
+        assert_eq!(table.sewn_paths(), &[path]);
     }
 }
