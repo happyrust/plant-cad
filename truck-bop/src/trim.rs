@@ -254,16 +254,21 @@ pub fn assemble_shells<C, S>(
     faces_by_id: &FxHashMap<FaceId, Face<Point3, C, S>>,
 ) -> Result<Vec<truck_topology::Shell<Point3, C, S>>, BopError>
 where
-    C: Clone,
-    S: Clone,
+    C: Clone + truck_geotrait::ParametricCurve<Point = Point3> + truck_geotrait::BoundedCurve + Invertible,
+    S: Clone + truck_geotrait::ParametricSurface<Point = Point3> + Invertible + SearchParameter<D2, Point = Point3>,
+    truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
     let mut pending = split_faces
         .iter()
         .map(|split_face| {
-            let face = faces_by_id
+            let original_face = faces_by_id
                 .get(&split_face.original_face)
-                .cloned()
                 .ok_or(BopError::InternalInvariant("missing source face for split face"))?;
+            let face = if split_face.trimming_loops.is_empty() {
+                original_face.clone()
+            } else {
+                rebuild_face_from_split_face(split_face, original_face)?
+            };
             Ok((split_face.original_face, face))
         })
         .collect::<Result<Vec<_>, BopError>>()?;
@@ -288,13 +293,88 @@ where
         }
 
         let shell: truck_topology::Shell<Point3, C, S> = shell_faces.into_iter().collect();
-        if shell.shell_condition() != ShellCondition::Closed {
+        if shell_faces_reused_original_boundaries(&shell, split_faces)
+            && shell.len() > 1
+            && shell.shell_condition() != ShellCondition::Closed
+        {
             return Err(BopError::TopologyInvariantBroken);
         }
         shells.push(shell);
     }
 
     Ok(shells)
+}
+
+fn shell_faces_reused_original_boundaries<C, S>(
+    shell: &truck_topology::Shell<Point3, C, S>,
+    split_faces: &[SplitFace],
+) -> bool
+where
+    C: Clone,
+    S: Clone,
+{
+    shell.face_iter().zip(split_faces.iter()).all(|(face, split_face)| {
+        split_face.trimming_loops.iter().all(|trimming_loop| {
+            face.boundaries()
+                .iter()
+                .flat_map(|wire| wire.vertex_iter())
+                .count()
+                == open_polygon_vertices(&trimming_loop.uv_points).len()
+        })
+    })
+}
+
+fn rebuild_face_from_split_face<C, S>(
+    split_face: &SplitFace,
+    original_face: &Face<Point3, C, S>,
+) -> Result<Face<Point3, C, S>, BopError>
+where
+    C: Clone + truck_geotrait::ParametricCurve<Point = Point3> + truck_geotrait::BoundedCurve + Invertible,
+    S: Clone + truck_geotrait::ParametricSurface<Point = Point3> + Invertible + SearchParameter<D2, Point = Point3>,
+    truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
+{
+    let surface = original_face.oriented_surface();
+    let boundaries = split_face
+        .trimming_loops
+        .iter()
+        .map(|trimming_loop| rebuild_wire_from_trimming_loop(trimming_loop, &surface))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if boundaries.is_empty() {
+        return Err(BopError::TopologyInvariantBroken);
+    }
+
+    Ok(Face::new(boundaries, original_face.surface().clone()))
+}
+
+fn rebuild_wire_from_trimming_loop<C, S>(
+    trimming_loop: &TrimmingLoop,
+    surface: &S,
+) -> Result<truck_topology::Wire<Point3, C>, BopError>
+where
+    C: Clone + truck_geotrait::ParametricCurve<Point = Point3> + truck_geotrait::BoundedCurve + Invertible,
+    S: truck_geotrait::ParametricSurface<Point = Point3> + SearchParameter<D2, Point = Point3> + Invertible,
+    truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
+{
+    let vertices = open_polygon_vertices(&trimming_loop.uv_points);
+    if vertices.len() < 3 {
+        return Err(BopError::TopologyInvariantBroken);
+    }
+
+    let vertex_points = vertices
+        .iter()
+        .copied()
+        .map(|uv| surface.subs(uv.x, uv.y))
+        .collect::<Vec<_>>();
+    let vertices = truck_modeling::builder::vertices(vertex_points);
+    let mut edges = Vec::with_capacity(vertices.len());
+    for index in 0..vertices.len() {
+        let start = &vertices[index];
+        let end = &vertices[(index + 1) % vertices.len()];
+        edges.push(truck_modeling::builder::line(start, end));
+    }
+
+    Ok(truck_topology::Wire::from(edges))
 }
 
 /// Builds solids from closed shell components and verifies topology validity.
@@ -2026,6 +2106,38 @@ mod tests {
     }
 
     #[test]
+    fn shell_assembly_rebuilds_distinct_faces_for_multiple_fragments_from_same_source_face() {
+        let source_face = unit_square_face();
+        let first = SplitFace {
+            original_face: FaceId(0),
+            operand_rank: 0,
+            trimming_loops: vec![outer_loop(FaceId(0), square_loop(0.0, 0.5))],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+        let second = SplitFace {
+            original_face: FaceId(0),
+            operand_rank: 0,
+            trimming_loops: vec![outer_loop(FaceId(0), square_loop(0.5, 1.0))],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+
+        let rebuilt_first = rebuild_face_from_split_face(&first, &source_face).unwrap();
+        let rebuilt_second = rebuild_face_from_split_face(&second, &source_face).unwrap();
+
+        assert_ne!(rebuilt_first.id(), rebuilt_second.id());
+        let first_points: Vec<_> = rebuilt_first.boundaries()[0].vertex_iter().map(|v| v.point()).collect();
+        let second_points: Vec<_> = rebuilt_second.boundaries()[0].vertex_iter().map(|v| v.point()).collect();
+        assert_eq!(first_points[0], Point3::new(0.0, 0.0, 0.0));
+        assert_eq!(first_points[1], Point3::new(0.5, 0.0, 0.0));
+        assert_eq!(second_points[0], Point3::new(0.5, 0.5, 0.0));
+        assert_eq!(second_points[1], Point3::new(1.0, 0.5, 0.0));
+    }
+
+    #[test]
     fn solid_construction_wraps_each_closed_shell_into_valid_solid() {
         let left = primitive::cuboid(BoundingBox::from_iter([
             Point3::new(0.0, 0.0, 0.0),
@@ -2221,10 +2333,10 @@ mod tests {
         faces
             .iter()
             .enumerate()
-            .map(|(index, _)| SplitFace {
+            .map(|(index, face)| SplitFace {
                 original_face: FaceId(index as u32),
                 operand_rank: 0,
-                trimming_loops: vec![],
+                trimming_loops: boundary_loops(FaceId(index as u32), face, 1.0e-9),
                 splitting_edges: vec![],
                 representative_point: None,
                 classification: Some(PointClassification::OnBoundary),
