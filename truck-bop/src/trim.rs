@@ -2220,6 +2220,21 @@ mod tests {
     }
 
     #[test]
+    fn face_without_sections_remains_single_fragment() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face = unit_square_face();
+
+        let loops = build_trimming_loops(&mut bopds, &[(FaceId(0), face)]);
+        let fragments = build_split_faces(&mut bopds);
+
+        assert_eq!(loops, 1);
+        assert_eq!(fragments, 1);
+        assert_eq!(bopds.split_faces().len(), 1);
+        assert_eq!(bopds.split_faces()[0].trimming_loops.len(), 1);
+        assert!(bopds.split_faces()[0].splitting_edges.is_empty());
+    }
+
+    #[test]
     fn split_face_records_capture_splitting_edges_once() {
         let mut bopds = BopDs::with_options(BopOptions::default());
         let section_curve_id = bopds.next_section_curve_id();
@@ -4057,6 +4072,29 @@ mod tests {
         assert!(solids
             .iter()
             .all(|solid| solid.boundaries()[0].shell_condition() == ShellCondition::Closed));
+    }
+
+    #[test]
+    fn minimal_closed_fragment_pipeline_builds_one_solid() {
+        let shell = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ]))
+        .into_boundaries()
+        .pop()
+        .unwrap();
+
+        let faces: Vec<_> = shell.face_iter().cloned().collect();
+        let split_faces = split_faces_for_source_faces(&faces);
+        let face_map = source_face_map(&split_faces, &faces);
+
+        let shells = assemble_shells(&split_faces, &face_map).unwrap();
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].shell_condition(), ShellCondition::Closed);
+
+        let solids = build_solids_from_shells(shells).unwrap();
+        assert_eq!(solids.len(), 1);
+        assert_eq!(solids[0].boundaries().len(), 1);
     }
 
     #[test]

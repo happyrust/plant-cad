@@ -731,6 +731,73 @@ mod tests {
     }
 
     #[test]
+    fn generated_vertex_ids_are_monotonic_and_unique() {
+        let mut ds = BopDs::new();
+
+        let first = ds.next_generated_vertex_id();
+        let second = ds.next_generated_vertex_id();
+        let third = ds.next_generated_vertex_id();
+
+        assert!(first < second);
+        assert!(second < third);
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        assert_ne!(first, third);
+
+        ds.push_merged_vertex(MergedVertex {
+            id: third,
+            original_vertices: vec![third],
+            point: Point3::new(0.0, 0.0, 0.0),
+        });
+
+        let fourth = ds.next_generated_vertex_id();
+        assert!(third < fourth);
+    }
+
+    #[test]
+    fn section_curve_ids_are_monotonic_and_unique() {
+        let mut ds = BopDs::new();
+
+        let first = ds.next_section_curve_id();
+        let second = ds.next_section_curve_id();
+        let third = ds.next_section_curve_id();
+
+        assert!(first < second);
+        assert!(second < third);
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        assert_ne!(first, third);
+
+        ds.push_section_curve(SectionCurve {
+            id: third,
+            faces: (FaceId(0), FaceId(1)),
+            start: VertexId(10),
+            end: VertexId(11),
+            samples: vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
+            face_parameters: [
+                (
+                    FaceId(0),
+                    vec![
+                        truck_base::cgmath64::Point2::new(0.0, 0.0),
+                        truck_base::cgmath64::Point2::new(1.0, 0.0),
+                    ],
+                ),
+                (
+                    FaceId(1),
+                    vec![
+                        truck_base::cgmath64::Point2::new(0.0, 0.0),
+                        truck_base::cgmath64::Point2::new(1.0, 0.0),
+                    ],
+                ),
+            ],
+            face_projection_available: [(FaceId(0), true), (FaceId(1), true)],
+        });
+
+        let fourth = ds.next_section_curve_id();
+        assert!(third < fourth);
+    }
+
+    #[test]
     fn stores_trimming_loop_records() {
         let mut ds = BopDs::new();
         let trimming_loop = TrimmingLoop {
