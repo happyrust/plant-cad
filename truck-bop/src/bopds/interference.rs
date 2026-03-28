@@ -74,9 +74,7 @@ impl SewnEdgePair {
 }
 
 impl PartialOrd for SewnEdgeSource {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
 }
 
 impl Ord for SewnEdgeSource {
@@ -120,6 +118,8 @@ pub struct SplitFace {
 pub struct TrimmingEdge {
     /// Optional source section curve for synthesized trimming edges.
     pub section_curve: Option<SectionCurveId>,
+    /// Optional source boundary edge identifier when the edge comes from a real face boundary.
+    pub original_edge: Option<EdgeId>,
     /// Polyline vertices in face UV space.
     pub uv_points: Vec<Point2>,
 }
@@ -129,7 +129,9 @@ pub struct TrimmingEdge {
 pub struct TrimmingLoop {
     /// Source face that owns this loop.
     pub face: FaceId,
-    /// Fragment-local vertex identifiers aligned with the loop polyline.
+    /// Fragment-local vertex identifiers aligned with the loop polyline traversal.
+    /// Closed loops may repeat the first vertex id at the end so `vertex_ids` stays aligned
+    /// with the closed `uv_points` polyline.
     pub vertex_ids: Vec<VertexId>,
     /// Ordered edges forming the loop.
     pub edges: Vec<TrimmingEdge>,
@@ -257,34 +259,22 @@ pub struct InterferenceTable {
 
 impl InterferenceTable {
     /// Store a vertex-vertex interference.
-    pub fn push_vv(&mut self, interference: VVInterference) {
-        self.vv.push(interference);
-    }
+    pub fn push_vv(&mut self, interference: VVInterference) { self.vv.push(interference); }
 
     /// Store a vertex-edge interference.
-    pub fn push_ve(&mut self, interference: VEInterference) {
-        self.ve.push(interference);
-    }
+    pub fn push_ve(&mut self, interference: VEInterference) { self.ve.push(interference); }
 
     /// Store a vertex-face interference.
-    pub fn push_vf(&mut self, interference: VFInterference) {
-        self.vf.push(interference);
-    }
+    pub fn push_vf(&mut self, interference: VFInterference) { self.vf.push(interference); }
 
     /// Store an edge-edge interference.
-    pub fn push_ee(&mut self, interference: EEInterference) {
-        self.ee.push(interference);
-    }
+    pub fn push_ee(&mut self, interference: EEInterference) { self.ee.push(interference); }
 
     /// Store an edge-face interference.
-    pub fn push_ef(&mut self, interference: EFInterference) {
-        self.ef.push(interference);
-    }
+    pub fn push_ef(&mut self, interference: EFInterference) { self.ef.push(interference); }
 
     /// Store a face-face interference.
-    pub fn push_ff(&mut self, interference: FFInterference) {
-        self.ff.push(interference);
-    }
+    pub fn push_ff(&mut self, interference: FFInterference) { self.ff.push(interference); }
 
     /// Store a section curve.
     pub fn push_section_curve(&mut self, section_curve: SectionCurve) {
@@ -297,9 +287,7 @@ impl InterferenceTable {
     }
 
     /// Store a split face fragment.
-    pub fn push_split_face(&mut self, split_face: SplitFace) {
-        self.split_faces.push(split_face);
-    }
+    pub fn push_split_face(&mut self, split_face: SplitFace) { self.split_faces.push(split_face); }
 
     /// Store a merged vertex cluster.
     pub fn push_merged_vertex(&mut self, merged_vertex: MergedVertex) {
@@ -307,64 +295,40 @@ impl InterferenceTable {
     }
 
     /// Store a sewn boundary path.
-    pub fn push_sewn_path(&mut self, sewn_path: SewnPath) {
-        self.sewn_paths.push(sewn_path);
-    }
+    pub fn push_sewn_path(&mut self, sewn_path: SewnPath) { self.sewn_paths.push(sewn_path); }
 
     /// Borrow all vertex-vertex interferences.
-    pub fn vv(&self) -> &[VVInterference] {
-        &self.vv
-    }
+    pub fn vv(&self) -> &[VVInterference] { &self.vv }
 
     /// Borrow all vertex-edge interferences.
-    pub fn ve(&self) -> &[VEInterference] {
-        &self.ve
-    }
+    pub fn ve(&self) -> &[VEInterference] { &self.ve }
 
     /// Borrow all vertex-face interferences.
-    pub fn vf(&self) -> &[VFInterference] {
-        &self.vf
-    }
+    pub fn vf(&self) -> &[VFInterference] { &self.vf }
 
     /// Borrow all edge-edge interferences.
-    pub fn ee(&self) -> &[EEInterference] {
-        &self.ee
-    }
+    pub fn ee(&self) -> &[EEInterference] { &self.ee }
 
     /// Borrow all edge-face interferences.
-    pub fn ef(&self) -> &[EFInterference] {
-        &self.ef
-    }
+    pub fn ef(&self) -> &[EFInterference] { &self.ef }
 
     /// Borrow all face-face interferences.
-    pub fn ff(&self) -> &[FFInterference] {
-        &self.ff
-    }
+    pub fn ff(&self) -> &[FFInterference] { &self.ff }
 
     /// Borrow all section curves.
-    pub fn section_curves(&self) -> &[SectionCurve] {
-        &self.section_curves
-    }
+    pub fn section_curves(&self) -> &[SectionCurve] { &self.section_curves }
 
     /// Borrow all trimming loops.
-    pub fn trimming_loops(&self) -> &[TrimmingLoop] {
-        &self.trimming_loops
-    }
+    pub fn trimming_loops(&self) -> &[TrimmingLoop] { &self.trimming_loops }
 
     /// Borrow all split face fragments.
-    pub fn split_faces(&self) -> &[SplitFace] {
-        &self.split_faces
-    }
+    pub fn split_faces(&self) -> &[SplitFace] { &self.split_faces }
 
     /// Borrow all merged vertex clusters.
-    pub fn merged_vertices(&self) -> &[MergedVertex] {
-        &self.merged_vertices
-    }
+    pub fn merged_vertices(&self) -> &[MergedVertex] { &self.merged_vertices }
 
     /// Borrow all sewn boundary paths.
-    pub fn sewn_paths(&self) -> &[SewnPath] {
-        &self.sewn_paths
-    }
+    pub fn sewn_paths(&self) -> &[SewnPath] { &self.sewn_paths }
 }
 
 #[cfg(test)]
@@ -374,7 +338,10 @@ mod tests {
     #[test]
     fn stores_vv_interference_records() {
         let mut table = InterferenceTable::default();
-        let interference = VVInterference { vertex1: VertexId(1), vertex2: VertexId(2) };
+        let interference = VVInterference {
+            vertex1: VertexId(1),
+            vertex2: VertexId(2),
+        };
 
         table.push_vv(interference);
 
@@ -475,6 +442,7 @@ mod tests {
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(2)),
+                original_edge: None,
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -499,6 +467,7 @@ mod tests {
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(2)),
+                original_edge: None,
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![

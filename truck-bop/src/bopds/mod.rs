@@ -9,21 +9,18 @@ mod pave;
 mod pave_block;
 pub(crate) mod shape_info;
 
+pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
-    EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex,
-    SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
-    TrimmingLoop,
+    EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
+    SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop,
     VEInterference, VFInterference, VVInterference,
-};
-pub use ids::{
-    CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
 };
 pub use pave::Pave;
 pub use pave_block::PaveBlock;
 
-use rustc_hash::FxHashMap;
 use crate::BopOptions;
 use crate::PointClassification;
+use rustc_hash::FxHashMap;
 use shape_info::{ShapeInfo, ShapeKind};
 use truck_base::cgmath64::Point3;
 use truck_geotrait::{BoundedCurve, Invertible, ParametricCurve};
@@ -70,9 +67,7 @@ impl BopDs {
     }
 
     /// Borrow the configured options.
-    pub fn options(&self) -> &BopOptions {
-        &self.options
-    }
+    pub fn options(&self) -> &BopOptions { &self.options }
 
     /// Register vertex source
     pub fn register_vertex_source(&mut self, operand_rank: u8) -> VertexId {
@@ -135,17 +130,20 @@ impl BopDs {
 
     /// Get shape info for a registered vertex.
     pub fn vertex_shape_info(&self, vertex_id: VertexId) -> Option<&ShapeInfo> {
-        self.vertex_shape_id(vertex_id).and_then(|shape_id| self.shape_info(shape_id))
+        self.vertex_shape_id(vertex_id)
+            .and_then(|shape_id| self.shape_info(shape_id))
     }
 
     /// Get shape info for a registered edge.
     pub fn edge_shape_info(&self, edge_id: EdgeId) -> Option<&ShapeInfo> {
-        self.edge_shape_id(edge_id).and_then(|shape_id| self.shape_info(shape_id))
+        self.edge_shape_id(edge_id)
+            .and_then(|shape_id| self.shape_info(shape_id))
     }
 
     /// Get shape info for a registered face.
     pub fn face_shape_info(&self, face_id: FaceId) -> Option<&ShapeInfo> {
-        self.face_shape_id(face_id).and_then(|shape_id| self.shape_info(shape_id))
+        self.face_shape_id(face_id)
+            .and_then(|shape_id| self.shape_info(shape_id))
     }
 
     /// Store a vertex-vertex interference.
@@ -238,9 +236,7 @@ impl BopDs {
 
     /// Rebuild sorted, deduplicated pave lists for all known edges while ensuring endpoints exist.
     pub fn rebuild_paves_for_edges<C>(&mut self, edges: &[(EdgeId, Edge<Point3, C>)])
-    where
-        C: Clone + ParametricCurve<Point = Point3> + BoundedCurve + Invertible,
-    {
+    where C: Clone + ParametricCurve<Point = Point3> + BoundedCurve + Invertible {
         for &(edge_id, ref edge) in edges {
             self.ensure_edge_endpoints(edge_id, edge);
             self.normalize_edge_paves(edge_id);
@@ -267,100 +263,73 @@ impl BopDs {
     }
 
     /// Borrow all stored vertex-vertex interferences.
-    pub fn vv_interferences(&self) -> &[VVInterference] {
-        self.interferences.vv()
-    }
+    pub fn vv_interferences(&self) -> &[VVInterference] { self.interferences.vv() }
 
     /// Borrow all stored vertex-edge interferences.
-    pub fn ve_interferences(&self) -> &[VEInterference] {
-        self.interferences.ve()
-    }
+    pub fn ve_interferences(&self) -> &[VEInterference] { self.interferences.ve() }
 
     /// Borrow all stored vertex-face interferences.
-    pub fn vf_interferences(&self) -> &[VFInterference] {
-        self.interferences.vf()
-    }
+    pub fn vf_interferences(&self) -> &[VFInterference] { self.interferences.vf() }
 
     /// Borrow all stored edge-edge interferences.
-    pub fn ee_interferences(&self) -> &[EEInterference] {
-        self.interferences.ee()
-    }
+    pub fn ee_interferences(&self) -> &[EEInterference] { self.interferences.ee() }
 
     /// Borrow all stored edge-face interferences.
-    pub fn ef_interferences(&self) -> &[EFInterference] {
-        self.interferences.ef()
-    }
+    pub fn ef_interferences(&self) -> &[EFInterference] { self.interferences.ef() }
 
     /// Borrow all stored face-face interferences.
-    pub fn ff_interferences(&self) -> &[FFInterference] {
-        self.interferences.ff()
-    }
+    pub fn ff_interferences(&self) -> &[FFInterference] { self.interferences.ff() }
 
     /// Borrow all stored section curves.
-    pub fn section_curves(&self) -> &[SectionCurve] {
-        self.interferences.section_curves()
-    }
+    pub fn section_curves(&self) -> &[SectionCurve] { self.interferences.section_curves() }
 
     /// Borrow all stored trimming loops.
-    pub fn trimming_loops(&self) -> &[TrimmingLoop] {
-        self.interferences.trimming_loops()
-    }
+    pub fn trimming_loops(&self) -> &[TrimmingLoop] { self.interferences.trimming_loops() }
 
     /// Borrow all stored split face fragments.
-    pub fn split_faces(&self) -> &[SplitFace] {
-        self.interferences.split_faces()
-    }
+    pub fn split_faces(&self) -> &[SplitFace] { self.interferences.split_faces() }
 
     /// Borrow all merged vertex clusters.
-    pub fn merged_vertices(&self) -> &[MergedVertex] {
-        self.interferences.merged_vertices()
-    }
+    pub fn merged_vertices(&self) -> &[MergedVertex] { self.interferences.merged_vertices() }
 
     /// Borrow all sewn boundary paths.
-    pub fn sewn_paths(&self) -> &[SewnPath] {
-        self.interferences.sewn_paths()
-    }
+    pub fn sewn_paths(&self) -> &[SewnPath] { self.interferences.sewn_paths() }
 
     /// Borrow all stored paves.
-    pub fn paves(&self) -> &[Pave] {
-        &self.paves
-    }
+    pub fn paves(&self) -> &[Pave] { &self.paves }
 
     /// Borrow all stored pave blocks.
-    pub fn pave_blocks(&self) -> &[PaveBlock] {
-        &self.pave_blocks
-    }
+    pub fn pave_blocks(&self) -> &[PaveBlock] { &self.pave_blocks }
 
     /// Clear previously computed merged vertex clusters.
-    pub fn clear_merged_vertices(&mut self) {
-        self.interferences.merged_vertices.clear();
-    }
+    pub fn clear_merged_vertices(&mut self) { self.interferences.merged_vertices.clear(); }
 
     /// Clear previously computed sewn boundary paths.
-    pub fn clear_sewn_paths(&mut self) {
-        self.interferences.sewn_paths.clear();
-    }
+    pub fn clear_sewn_paths(&mut self) { self.interferences.sewn_paths.clear(); }
 
     fn ensure_edge_endpoints<C>(&mut self, edge_id: EdgeId, edge: &Edge<Point3, C>)
-    where
-        C: Clone + ParametricCurve<Point = Point3> + BoundedCurve + Invertible,
-    {
+    where C: Clone + ParametricCurve<Point = Point3> + BoundedCurve + Invertible {
         let curve = edge.oriented_curve();
         let (start, end) = curve.range_tuple();
         let tolerance = self.options.parametric_tol;
         let start_vertex = self.next_generated_vertex_id();
         let end_vertex = self.next_generated_vertex_id();
 
-        self.insert_or_merge_pave(Pave::new(edge_id, start_vertex, start, tolerance)
-            .expect("parametric tolerance is validated when BopOptions is created"));
-        self.insert_or_merge_pave(Pave::new(edge_id, end_vertex, end, tolerance)
-            .expect("parametric tolerance is validated when BopOptions is created"));
+        self.insert_or_merge_pave(
+            Pave::new(edge_id, start_vertex, start, tolerance)
+                .expect("parametric tolerance is validated when BopOptions is created"),
+        );
+        self.insert_or_merge_pave(
+            Pave::new(edge_id, end_vertex, end, tolerance)
+                .expect("parametric tolerance is validated when BopOptions is created"),
+        );
     }
 
     fn insert_or_merge_pave(&mut self, pave: Pave) {
         if let Some(existing) = self.paves.iter_mut().find(|existing| {
             existing.edge == pave.edge
-                && (existing.parameter - pave.parameter).abs() <= existing.tolerance.max(pave.tolerance)
+                && (existing.parameter - pave.parameter).abs()
+                    <= existing.tolerance.max(pave.tolerance)
         }) {
             if pave.vertex.0 < existing.vertex.0 {
                 existing.vertex = pave.vertex;
@@ -406,11 +375,12 @@ impl BopDs {
 
     fn rebuild_pave_blocks_for_edge(&mut self, edge_id: EdgeId) {
         let edge_paves = self.paves_for_edge(edge_id);
-        self.pave_blocks.retain(|block| block.original_edge != edge_id);
+        self.pave_blocks
+            .retain(|block| block.original_edge != edge_id);
         self.pave_blocks.extend(
-            edge_paves
-                .windows(2)
-                .map(|pair| PaveBlock::from_pave_pair(pair[0], pair[1], self.options.parametric_tol)),
+            edge_paves.windows(2).map(|pair| {
+                PaveBlock::from_pave_pair(pair[0], pair[1], self.options.parametric_tol)
+            }),
         );
     }
 }
@@ -443,7 +413,10 @@ mod tests {
     #[test]
     fn stores_vv_interference_records() {
         let mut ds = BopDs::new();
-        let interference = VVInterference { vertex1: VertexId(0), vertex2: VertexId(1) };
+        let interference = VVInterference {
+            vertex1: VertexId(0),
+            vertex2: VertexId(1),
+        };
 
         ds.push_vv_interference(interference);
 
@@ -475,13 +448,20 @@ mod tests {
         ds.push_pave(Pave::new(EdgeId(1), VertexId(1), 0.25, 1.0e-8).unwrap());
         ds.push_pave(Pave::new(EdgeId(1), VertexId(3), 0.5, 1.0e-8).unwrap());
 
-        let parameters: Vec<f64> = ds.paves_for_edge(EdgeId(1)).into_iter().map(|pave| pave.parameter).collect();
+        let parameters: Vec<f64> = ds
+            .paves_for_edge(EdgeId(1))
+            .into_iter()
+            .map(|pave| pave.parameter)
+            .collect();
         assert_eq!(parameters, vec![0.25, 0.5, 0.75]);
     }
 
     #[test]
     fn pave_deduplication_merges_close_parameters() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-5, ..BopOptions::default() });
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-5,
+            ..BopOptions::default()
+        });
 
         ds.push_pave(Pave::new(EdgeId(1), VertexId(4), 0.5, 1.0e-5).unwrap());
         ds.push_pave(Pave::new(EdgeId(1), VertexId(2), 0.500009, 1.0e-5).unwrap());
@@ -494,26 +474,30 @@ mod tests {
 
     #[test]
     fn pave_sorting_adds_missing_edge_endpoints() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(1), VertexId(10), 0.25, 1.0e-8).unwrap());
         ds.rebuild_paves_for_edges(&[(EdgeId(1), edge)]);
 
-        let parameters: Vec<f64> = ds.paves_for_edge(EdgeId(1)).into_iter().map(|pave| pave.parameter).collect();
+        let parameters: Vec<f64> = ds
+            .paves_for_edge(EdgeId(1))
+            .into_iter()
+            .map(|pave| pave.parameter)
+            .collect();
         assert_eq!(parameters, vec![0.0, 0.25, 1.0]);
     }
 
     #[test]
     fn pave_sorting_allocates_generated_vertex_ids_for_missing_endpoints() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(2), VertexId(10), 0.25, 1.0e-8).unwrap());
         ds.rebuild_paves_for_edges(&[(EdgeId(2), edge)]);
@@ -532,11 +516,11 @@ mod tests {
 
     #[test]
     fn pave_sorting_reuses_existing_generated_endpoint_ids_on_rebuild() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.rebuild_paves_for_edges(&[(EdgeId(4), edge.clone())]);
         let first_vertices: Vec<VertexId> = ds
@@ -558,11 +542,11 @@ mod tests {
 
     #[test]
     fn pave_sorting_rebuild_is_idempotent() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(1), VertexId(10), 0.5, 1.0e-8).unwrap());
         ds.rebuild_paves_for_edges(&[(EdgeId(1), edge.clone())]);
@@ -576,11 +560,11 @@ mod tests {
 
     #[test]
     fn paveblock_creation_creates_one_block_per_consecutive_pair() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(1), VertexId(10), 0.75, 1.0e-8).unwrap());
         ds.push_pave(Pave::new(EdgeId(1), VertexId(11), 0.25, 1.0e-8).unwrap());
@@ -595,11 +579,11 @@ mod tests {
 
     #[test]
     fn paveblock_creation_uses_sorted_ranges_and_vertices() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(3), VertexId(41), 0.6, 1.0e-8).unwrap());
         ds.push_pave(Pave::new(EdgeId(3), VertexId(40), 0.2, 1.0e-8).unwrap());
@@ -614,13 +598,20 @@ mod tests {
 
     #[test]
     fn paveblock_creation_reorders_reversed_pave_pair_vertices() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
 
         ds.push_pave(Pave::new(EdgeId(4), VertexId(41), 0.8, 1.0e-8).unwrap());
         ds.push_pave(Pave::new(EdgeId(4), VertexId(40), 0.2, 1.0e-8).unwrap());
 
         ds.pave_blocks.clear();
-        ds.pave_blocks.push(PaveBlock::from_pave_pair(ds.paves[0], ds.paves[1], ds.options.parametric_tol));
+        ds.pave_blocks.push(PaveBlock::from_pave_pair(
+            ds.paves[0],
+            ds.paves[1],
+            ds.options.parametric_tol,
+        ));
 
         let block = ds.pave_blocks_for_edge(EdgeId(4))[0];
         assert_eq!(block.start_vertex, VertexId(40));
@@ -630,28 +621,31 @@ mod tests {
 
     #[test]
     fn paveblock_micro_segment_marks_unsplittable() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-4, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-4,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(5), VertexId(50), 0.25, 1.0e-8).unwrap());
         ds.push_pave(Pave::new(EdgeId(5), VertexId(51), 0.25001, 1.0e-8).unwrap());
         ds.rebuild_paves_for_edges(&[(EdgeId(5), edge)]);
 
         let blocks = ds.pave_blocks_for_edge(EdgeId(5));
-        let micro = blocks.iter().find(|block| block.param_range == (0.25, 0.25001)).unwrap();
+        let micro = blocks
+            .iter()
+            .find(|block| block.param_range == (0.25, 0.25001))
+            .unwrap();
         assert!(micro.unsplittable);
     }
 
     #[test]
     fn paveblock_creation_edge_with_n_paves_produces_n_minus_one_blocks() {
-        let mut ds = BopDs::with_options(BopOptions { parametric_tol: 1.0e-8, ..BopOptions::default() });
-        let edge = line_edge(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        );
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
         ds.push_pave(Pave::new(EdgeId(8), VertexId(80), 0.2, 1.0e-8).unwrap());
         ds.push_pave(Pave::new(EdgeId(8), VertexId(81), 0.4, 1.0e-8).unwrap());
@@ -744,6 +738,7 @@ mod tests {
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
                 section_curve: Some(SectionCurveId(0)),
+                original_edge: None,
                 uv_points: vec![
                     truck_base::cgmath64::Point2::new(0.0, 0.0),
                     truck_base::cgmath64::Point2::new(1.0, 0.0),
@@ -774,6 +769,7 @@ mod tests {
                 vertex_ids: vec![VertexId(1), VertexId(2)],
                 edges: vec![TrimmingEdge {
                     section_curve: Some(SectionCurveId(0)),
+                    original_edge: None,
                     uv_points: vec![
                         truck_base::cgmath64::Point2::new(0.0, 0.0),
                         truck_base::cgmath64::Point2::new(1.0, 0.0),
@@ -878,10 +874,20 @@ mod tests {
             classification: None,
         });
 
-        ds.set_split_face_classification(0, Point3::new(1.0, 2.0, 3.0), PointClassification::OnBoundary);
+        ds.set_split_face_classification(
+            0,
+            Point3::new(1.0, 2.0, 3.0),
+            PointClassification::OnBoundary,
+        );
 
-        assert_eq!(ds.split_faces()[0].representative_point, Some(Point3::new(1.0, 2.0, 3.0)));
-        assert_eq!(ds.split_faces()[0].classification, Some(PointClassification::OnBoundary));
+        assert_eq!(
+            ds.split_faces()[0].representative_point,
+            Some(Point3::new(1.0, 2.0, 3.0))
+        );
+        assert_eq!(
+            ds.split_faces()[0].classification,
+            Some(PointClassification::OnBoundary)
+        );
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {

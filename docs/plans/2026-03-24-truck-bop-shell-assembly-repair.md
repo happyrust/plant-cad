@@ -1,5 +1,7 @@
 # Truck BOP Shell Assembly Repair Implementation Plan
 
+> **Superseded:** 本计划已被 `docs/plans/2026-03-28-truck-bop-trim-pipeline-repair-v2.md` 替代，请以后者为准；不要继续按本文件落地实现。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Restore `truck-bop` shell assembly so it groups fragments by real shared topology, rejects open shells, rejects globally inverted closed shells, and turns the five failing `trim.rs` shell tests green.
