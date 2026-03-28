@@ -2,7 +2,7 @@
 
 use crate::{bopds::VFInterference, BopDs, FaceId, VertexId};
 use truck_base::cgmath64::{EuclideanSpace, InnerSpace, MetricSpace, Point2, Point3};
-use truck_geotrait::{D2, Invertible, ParametricSurface, SearchNearestParameter};
+use truck_geotrait::{Invertible, ParametricSurface, SearchNearestParameter, D2};
 use truck_topology::{Face, Vertex};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
@@ -16,7 +16,9 @@ pub fn intersect_vf<C, S>(
 ) -> usize
 where
     C: Clone,
-    S: Clone + Invertible + ParametricSurface<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+    S: Clone
+        + Invertible
+        + ParametricSurface<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
         + SearchNearestParameter<D2, Point = Point3>,
 {
     let tolerance = bopds.options().geometric_tol;
@@ -32,7 +34,11 @@ where
         };
 
         let surface = face.oriented_surface();
-        let Some(parameters) = surface.search_nearest_parameter(point, SPHint::from_face(face), SEARCH_PARAMETER_TRIALS) else {
+        let Some(parameters) = surface.search_nearest_parameter(
+            point,
+            SPHint::from_face(face),
+            SEARCH_PARAMETER_TRIALS,
+        ) else {
             continue;
         };
 
@@ -63,11 +69,21 @@ fn vertex_point(vertices: &[(VertexId, Vertex<Point3>)], vertex_id: VertexId) ->
         .map(|(_, vertex)| vertex.point())
 }
 
-fn face_by_id<C, S>(faces: &[(FaceId, Face<Point3, C, S>)], face_id: FaceId) -> Option<&Face<Point3, C, S>> {
-    faces.iter().find(|(id, _)| *id == face_id).map(|(_, face)| face)
+fn face_by_id<C, S>(
+    faces: &[(FaceId, Face<Point3, C, S>)],
+    face_id: FaceId,
+) -> Option<&Face<Point3, C, S>> {
+    faces
+        .iter()
+        .find(|(id, _)| *id == face_id)
+        .map(|(_, face)| face)
 }
 
-fn point_projects_inside_face<C, S>(face: &Face<Point3, C, S>, parameters: (f64, f64), tolerance: f64) -> bool
+fn point_projects_inside_face<C, S>(
+    face: &Face<Point3, C, S>,
+    parameters: (f64, f64),
+    tolerance: f64,
+) -> bool
 where
     C: Clone,
 {
@@ -81,19 +97,33 @@ where
         && boundaries.all(|hole| !point_strictly_inside_wire(&hole, uv, tolerance))
 }
 
-fn point_on_or_inside_wire<C>(wire: &truck_topology::Wire<Point3, C>, point: Point2, tolerance: f64) -> bool
+fn point_on_or_inside_wire<C>(
+    wire: &truck_topology::Wire<Point3, C>,
+    point: Point2,
+    tolerance: f64,
+) -> bool
 where
     C: Clone,
 {
-    let polygon: Vec<Point2> = wire.vertex_iter().map(|vertex| Point2::new(vertex.point().x, vertex.point().y)).collect();
+    let polygon: Vec<Point2> = wire
+        .vertex_iter()
+        .map(|vertex| Point2::new(vertex.point().x, vertex.point().y))
+        .collect();
     point_in_polygon(&polygon, point, tolerance)
 }
 
-fn point_strictly_inside_wire<C>(wire: &truck_topology::Wire<Point3, C>, point: Point2, tolerance: f64) -> bool
+fn point_strictly_inside_wire<C>(
+    wire: &truck_topology::Wire<Point3, C>,
+    point: Point2,
+    tolerance: f64,
+) -> bool
 where
     C: Clone,
 {
-    let polygon: Vec<Point2> = wire.vertex_iter().map(|vertex| Point2::new(vertex.point().x, vertex.point().y)).collect();
+    let polygon: Vec<Point2> = wire
+        .vertex_iter()
+        .map(|vertex| Point2::new(vertex.point().x, vertex.point().y))
+        .collect();
     point_strictly_in_polygon(&polygon, point, tolerance)
 }
 
@@ -102,7 +132,9 @@ fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
         return false;
     }
 
-    if polygon.windows(2).any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
+    if polygon
+        .windows(2)
+        .any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
         || point_on_segment(point, *polygon.last().unwrap(), polygon[0], tolerance)
     {
         return true;
@@ -113,7 +145,8 @@ fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
     for &curr in polygon {
         let intersects = ((curr.y > point.y) != (prev.y > point.y))
             && (point.x
-                < (prev.x - curr.x) * (point.y - curr.y) / ((prev.y - curr.y).abs().max(f64::EPSILON))
+                < (prev.x - curr.x) * (point.y - curr.y)
+                    / ((prev.y - curr.y).abs().max(f64::EPSILON))
                     + curr.x);
         if intersects {
             inside = !inside;
@@ -125,11 +158,14 @@ fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
 }
 
 fn point_strictly_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
-    point_in_polygon(polygon, point, tolerance) && !point_on_polygon_boundary(polygon, point, tolerance)
+    point_in_polygon(polygon, point, tolerance)
+        && !point_on_polygon_boundary(polygon, point, tolerance)
 }
 
 fn point_on_polygon_boundary(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
-    polygon.windows(2).any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
+    polygon
+        .windows(2)
+        .any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
         || point_on_segment(point, *polygon.last().unwrap(), polygon[0], tolerance)
 }
 
@@ -177,7 +213,10 @@ mod tests {
 
     #[test]
     fn vf_intersection_detects_vertex_on_surface() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.25, 0.25, 0.0));
         let face = unit_square_face();
 
@@ -198,7 +237,10 @@ mod tests {
 
     #[test]
     fn vf_intersection_detects_vertex_within_tolerance_of_surface() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.01, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.3, 0.4, 0.005));
 
         let count = intersect_vf(
@@ -214,7 +256,10 @@ mod tests {
 
     #[test]
     fn vf_intersection_ignores_vertex_far_from_surface() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.01, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.3, 0.4, 0.05));
 
         let count = intersect_vf(
@@ -230,7 +275,10 @@ mod tests {
 
     #[test]
     fn vf_intersection_rejects_projection_outside_face_bounds() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.01, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(1.2, 0.25, 0.0));
 
         let count = intersect_vf(
@@ -246,7 +294,10 @@ mod tests {
 
     #[test]
     fn vf_intersection_accepts_vertex_on_face_boundary() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(1.0, 0.5, 0.0));
 
         let count = intersect_vf(
@@ -262,7 +313,10 @@ mod tests {
 
     #[test]
     fn vf_hole_rejects_vertex_inside_inner_void() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.5, 0.5, 0.0));
 
         let count = intersect_vf(
@@ -278,7 +332,10 @@ mod tests {
 
     #[test]
     fn vf_hole_accepts_vertex_between_outer_loop_and_hole() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.2, 0.2, 0.0));
 
         let count = intersect_vf(
@@ -306,14 +363,18 @@ mod tests {
             builder::line(&vertices[3], &vertices[0]),
         ];
         let wire = truck_topology::Wire::from(edges);
-        Face::new(vec![wire], truck_modeling::Surface::Plane(truck_modeling::Plane::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-        )))
+        Face::new(
+            vec![wire],
+            truck_modeling::Surface::Plane(truck_modeling::Plane::new(
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            )),
+        )
     }
 
-    fn square_face_with_square_hole() -> Face<Point3, truck_modeling::Curve, truck_modeling::Surface> {
+    fn square_face_with_square_hole() -> Face<Point3, truck_modeling::Curve, truck_modeling::Surface>
+    {
         let outer_vertices = builder::vertices([
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),

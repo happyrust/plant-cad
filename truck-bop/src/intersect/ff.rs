@@ -1,11 +1,14 @@
 //! Face-Face intersection detection.
 
 use crate::{bopds::FFInterference, bopds::SectionCurve, BopDs, FaceId, VertexId};
-use truck_base::{cgmath64::{MetricSpace, Point2, Point3}, tolerance::Tolerance};
+use truck_base::{
+    cgmath64::{MetricSpace, Point2, Point3},
+    tolerance::Tolerance,
+};
 use truck_geotrait::{Invertible, SearchParameter};
 use truck_meshalgo::analyzers::Collision;
 use truck_meshalgo::prelude::RobustMeshableShape;
-use truck_modeling::{Curve, Surface, BSplineCurve, IntersectionCurve, KnotVec};
+use truck_modeling::{BSplineCurve, Curve, IntersectionCurve, KnotVec, Surface};
 use truck_topology::{Face, Shell};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
@@ -16,7 +19,10 @@ pub fn intersect_ff(
     faces: &[(FaceId, Face<Point3, Curve, Surface>)],
     candidates: &[(FaceId, FaceId)],
 ) -> usize {
-    let tolerance = bopds.options().geometric_tol.max(bopds.options().approximation_tol);
+    let tolerance = bopds
+        .options()
+        .geometric_tol
+        .max(bopds.options().approximation_tol);
     let mut count = 0;
 
     for &(face1_id, face2_id) in candidates {
@@ -116,8 +122,7 @@ fn project_section_to_face(
     let mut parameters = Vec::with_capacity(samples.len());
 
     for &point in samples {
-        let uv = surface
-            .search_parameter(point, None, SEARCH_PARAMETER_TRIALS)?;
+        let uv = surface.search_parameter(point, None, SEARCH_PARAMETER_TRIALS)?;
         parameters.push(Point2::new(uv.0, uv.1));
     }
 
@@ -128,7 +133,10 @@ fn project_section_to_face(
     orient_parameter_loop(face, parameters)
 }
 
-fn orient_parameter_loop(face: &Face<Point3, Curve, Surface>, mut parameters: Vec<Point2>) -> Option<Vec<Point2>> {
+fn orient_parameter_loop(
+    face: &Face<Point3, Curve, Surface>,
+    mut parameters: Vec<Point2>,
+) -> Option<Vec<Point2>> {
     if parameters.len() < 2 {
         return Some(parameters);
     }
@@ -179,7 +187,8 @@ fn orient_open_section_pair(
     let face1_direction = parameters[1]
         .as_ref()
         .and_then(|parameters| endpoint_direction_key(faces[1], parameters));
-    if face0_direction.is_some() && face1_direction.is_some() && face0_direction != face1_direction {
+    if face0_direction.is_some() && face1_direction.is_some() && face0_direction != face1_direction
+    {
         if let Some(parameters) = parameters[1].as_mut() {
             parameters.reverse();
         }
@@ -242,7 +251,10 @@ fn face_by_id<'a>(
     faces: &'a [(FaceId, Face<Point3, Curve, Surface>)],
     face_id: FaceId,
 ) -> Option<&'a Face<Point3, Curve, Surface>> {
-    faces.iter().find(|(id, _)| *id == face_id).map(|(_, face)| face)
+    faces
+        .iter()
+        .find(|(id, _)| *id == face_id)
+        .map(|(_, face)| face)
 }
 
 fn choose_endpoint_vertex(
@@ -323,7 +335,9 @@ fn construct_polylines(lines: &[(Point3, Point3)]) -> Vec<Vec<Point3>> {
             }
         }
 
-        fn get_one(&self) -> Option<(PointIndex, &Node)> { self.0.iter().next().map(|(idx, node)| (*idx, node)) }
+        fn get_one(&self) -> Option<(PointIndex, &Node)> {
+            self.0.iter().next().map(|(idx, node)| (*idx, node))
+        }
 
         fn get_next(&mut self, idx: PointIndex) -> Option<(PointIndex, Point3)> {
             let node = self.0.get_mut(&idx)?;
@@ -417,14 +431,24 @@ mod tests {
         assert_eq!(section.face_parameters[1].1.len(), section.samples.len());
         let start = section.samples.first().copied().unwrap();
         let end = section.samples.last().copied().unwrap();
-        assert!(start.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2 || start.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2);
-        assert!(end.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2 || end.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2);
+        assert!(
+            start.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2
+                || start.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2
+        );
+        assert!(
+            end.distance(Point3::new(0.0, 0.0, 0.0)) < 1.0e-2
+                || end.distance(Point3::new(0.0, 1.0, 0.0)) < 1.0e-2
+        );
         assert_ne!(section.start, section.end);
 
         let yz_parameters = &section.face_parameters[0].1;
-        assert!(yz_parameters.windows(2).all(|pair| pair[0].distance(pair[1]) <= 1.0 + 1.0e-3));
+        assert!(yz_parameters
+            .windows(2)
+            .all(|pair| pair[0].distance(pair[1]) <= 1.0 + 1.0e-3));
         let xy_parameters = &section.face_parameters[1].1;
-        assert!(xy_parameters.windows(2).all(|pair| pair[0].distance(pair[1]) <= 1.0 + 1.0e-3));
+        assert!(xy_parameters
+            .windows(2)
+            .all(|pair| pair[0].distance(pair[1]) <= 1.0 + 1.0e-3));
     }
 
     #[test]
@@ -473,7 +497,10 @@ mod tests {
         let section = &bopds.section_curves()[0];
         assert_eq!(section.samples.len(), 2);
         assert_eq!(section.face_parameters[1].1, Vec::<Point2>::new());
-        assert_eq!(section.face_projection_available, [(FaceId(0), true), (FaceId(1), false)]);
+        assert_eq!(
+            section.face_projection_available,
+            [(FaceId(0), true), (FaceId(1), false)]
+        );
     }
 
     #[test]
@@ -485,7 +512,11 @@ mod tests {
 
         let section = &bopds.section_curves()[0];
         for (face_id, uv_samples) in &section.face_parameters {
-            assert!(!uv_samples.is_empty(), "missing uv samples for face {:?}", face_id);
+            assert!(
+                !uv_samples.is_empty(),
+                "missing uv samples for face {:?}",
+                face_id
+            );
             assert_eq!(uv_samples.len(), section.samples.len());
         }
     }
@@ -493,7 +524,10 @@ mod tests {
     #[test]
     fn ff_parallel_planes_produce_no_section_curve() {
         let mut bopds = BopDs::new();
-        let faces = vec![(FaceId(0), xy_square_face()), (FaceId(1), lifted_xy_square_face(1.0))];
+        let faces = vec![
+            (FaceId(0), xy_square_face()),
+            (FaceId(1), lifted_xy_square_face(1.0)),
+        ];
 
         let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
 

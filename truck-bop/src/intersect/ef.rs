@@ -2,7 +2,10 @@
 
 use crate::{bopds::EFInterference, BopDs, EdgeId, FaceId};
 use truck_base::cgmath64::{EuclideanSpace, InnerSpace, MetricSpace, Point2, Point3};
-use truck_geotrait::{algo::surface, BoundedCurve, Invertible, ParametricCurve, ParametricSurface, ParametricSurface3D, SearchNearestParameter};
+use truck_geotrait::{
+    algo::surface, BoundedCurve, Invertible, ParametricCurve, ParametricSurface,
+    ParametricSurface3D, SearchNearestParameter,
+};
 use truck_topology::{Edge, Face};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
@@ -16,7 +19,10 @@ pub fn intersect_ef<C, S>(
     candidates: &[(EdgeId, FaceId)],
 ) -> usize
 where
-    C: Clone + BoundedCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff> + Invertible + ParametricCurve,
+    C: Clone
+        + BoundedCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+        + Invertible
+        + ParametricCurve,
     S: Clone
         + Invertible
         + ParametricSurface<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
@@ -87,7 +93,12 @@ where
             let [(_t0, p0), (t1, p1), (_t2, p2)] = window else {
                 continue;
             };
-            let (Some((_uv0, dist0, inside0)), Some((uv1, dist1, inside1)), Some((_uv2, dist2, inside2))) = (p0, p1, p2) else {
+            let (
+                Some((_uv0, dist0, inside0)),
+                Some((uv1, dist1, inside1)),
+                Some((_uv2, dist2, inside2)),
+            ) = (p0, p1, p2)
+            else {
                 continue;
             };
 
@@ -95,14 +106,22 @@ where
             let hit_by_crossing = (*inside0 || *inside1 || *inside2)
                 && ((*dist0 > tolerance_sq && *dist1 <= tolerance_sq)
                     || (*dist1 <= tolerance_sq && *dist2 > tolerance_sq)
-                    || (*dist0 > tolerance_sq && *dist2 > tolerance_sq && *dist1 <= (*dist0).min(*dist2)));
+                    || (*dist0 > tolerance_sq
+                        && *dist2 > tolerance_sq
+                        && *dist1 <= (*dist0).min(*dist2)));
 
             if !hit_by_valley && !hit_by_crossing {
                 continue;
             }
 
             let hint = *uv1;
-            let Some((uv, parameter)) = surface::search_intersection_parameter(surface, hint, &curve, *t1, SEARCH_PARAMETER_TRIALS) else {
+            let Some((uv, parameter)) = surface::search_intersection_parameter(
+                surface,
+                hint,
+                &curve,
+                *t1,
+                SEARCH_PARAMETER_TRIALS,
+            ) else {
                 continue;
             };
 
@@ -144,22 +163,38 @@ where
 }
 
 fn edge_by_id<C>(edges: &[(EdgeId, Edge<Point3, C>)], edge_id: EdgeId) -> Option<&Edge<Point3, C>> {
-    edges.iter().find(|(id, _)| *id == edge_id).map(|(_, edge)| edge)
+    edges
+        .iter()
+        .find(|(id, _)| *id == edge_id)
+        .map(|(_, edge)| edge)
 }
 
-fn face_by_id<C, S>(faces: &[(FaceId, Face<Point3, C, S>)], face_id: FaceId) -> Option<&Face<Point3, C, S>> {
-    faces.iter().find(|(id, _)| *id == face_id).map(|(_, face)| face)
+fn face_by_id<C, S>(
+    faces: &[(FaceId, Face<Point3, C, S>)],
+    face_id: FaceId,
+) -> Option<&Face<Point3, C, S>> {
+    faces
+        .iter()
+        .find(|(id, _)| *id == face_id)
+        .map(|(_, face)| face)
 }
 
 fn sample_parameters(range: (f64, f64), division: usize) -> Vec<f64> {
     let (start, end) = range;
     let step = (end - start) / division as f64;
-    (0..=division).map(|index| start + step * index as f64).collect()
+    (0..=division)
+        .map(|index| start + step * index as f64)
+        .collect()
 }
 
-fn project_point<C, S>(surface: &S, point: Point3, face: &Face<Point3, C, S>) -> Option<(f64, f64)>
+fn project_point<C, S>(
+    surface: &S,
+    point: Point3,
+    face: &Face<Point3, C, S>,
+) -> Option<(f64, f64)>
 where
-    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3> + ParametricSurface<Point = Point3>,
+    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3>
+        + ParametricSurface<Point = Point3>,
     C: Clone,
 {
     surface.search_nearest_parameter(point, SPHint::from_face(face), SEARCH_PARAMETER_TRIALS)
@@ -192,19 +227,32 @@ fn push_unique_intersection(
     true
 }
 
-fn point_projects_inside_face<C, S>(face: &Face<Point3, C, S>, parameters: (f64, f64), tolerance: f64) -> bool
+fn point_projects_inside_face<C, S>(
+    face: &Face<Point3, C, S>,
+    parameters: (f64, f64),
+    tolerance: f64,
+) -> bool
 where
     C: Clone,
 {
     let uv = Point2::new(parameters.0, parameters.1);
-    face.boundaries().into_iter().all(|wire| point_on_or_inside_wire(&wire, uv, tolerance))
+    face.boundaries()
+        .into_iter()
+        .all(|wire| point_on_or_inside_wire(&wire, uv, tolerance))
 }
 
-fn point_on_or_inside_wire<C>(wire: &truck_topology::Wire<Point3, C>, point: Point2, tolerance: f64) -> bool
+fn point_on_or_inside_wire<C>(
+    wire: &truck_topology::Wire<Point3, C>,
+    point: Point2,
+    tolerance: f64,
+) -> bool
 where
     C: Clone,
 {
-    let polygon: Vec<Point2> = wire.vertex_iter().map(|vertex| Point2::new(vertex.point().x, vertex.point().y)).collect();
+    let polygon: Vec<Point2> = wire
+        .vertex_iter()
+        .map(|vertex| Point2::new(vertex.point().x, vertex.point().y))
+        .collect();
     point_in_polygon(&polygon, point, tolerance)
 }
 
@@ -213,8 +261,15 @@ fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
         return false;
     }
 
-    if polygon.windows(2).any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
-        || point_on_segment(point, *polygon.last().expect("polygon has at least 3 vertices"), polygon[0], tolerance)
+    if polygon
+        .windows(2)
+        .any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
+        || point_on_segment(
+            point,
+            *polygon.last().expect("polygon has at least 3 vertices"),
+            polygon[0],
+            tolerance,
+        )
     {
         return true;
     }
@@ -224,7 +279,8 @@ fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
     for &curr in polygon {
         let intersects = ((curr.y > point.y) != (prev.y > point.y))
             && (point.x
-                < (prev.x - curr.x) * (point.y - curr.y) / ((prev.y - curr.y).abs().max(f64::EPSILON))
+                < (prev.x - curr.x) * (point.y - curr.y)
+                    / ((prev.y - curr.y).abs().max(f64::EPSILON))
                     + curr.x);
         if intersects {
             inside = !inside;
@@ -351,8 +407,14 @@ mod tests {
 
         assert_eq!(count_a + count_b, 2);
         assert_eq!(bopds.ef_interferences().len(), 2);
-        assert!(bopds.ef_interferences().iter().any(|interference| interference.edge == EdgeId(0)));
-        assert!(bopds.ef_interferences().iter().any(|interference| interference.edge == EdgeId(1)));
+        assert!(bopds
+            .ef_interferences()
+            .iter()
+            .any(|interference| interference.edge == EdgeId(0)));
+        assert!(bopds
+            .ef_interferences()
+            .iter()
+            .any(|interference| interference.edge == EdgeId(1)));
     }
 
     #[test]
@@ -391,10 +453,13 @@ mod tests {
             builder::line(&vertices[3], &vertices[0]),
         ];
         let wire = truck_topology::Wire::from(edges);
-        Face::new(vec![wire], truck_modeling::Surface::Plane(truck_modeling::Plane::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-        )))
+        Face::new(
+            vec![wire],
+            truck_modeling::Surface::Plane(truck_modeling::Plane::new(
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            )),
+        )
     }
 }

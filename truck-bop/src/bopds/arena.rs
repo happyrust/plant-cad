@@ -1,12 +1,14 @@
 //! Typed arena for indexed storage
 
 /// A typed arena that maps unique IDs to stored values
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Arena<T, Id> {
     items: Vec<T>,
     id_from_index: fn(u32) -> Id,
 }
 
+#[allow(dead_code)]
 impl<T, Id> Arena<T, Id> {
     /// Create a new arena with the given ID constructor
     pub fn new(id_from_index: fn(u32) -> Id) -> Self {
@@ -25,36 +27,26 @@ impl<T, Id> Arena<T, Id> {
 
     /// Get a reference to the value with the given ID
     pub fn get(&self, id: Id) -> Option<&T>
-    where
-        Id: Into<u32> + Copy,
-    {
+    where Id: Into<u32> + Copy {
         let index: u32 = id.into();
         self.items.get(index as usize)
     }
 
     /// Get a mutable reference to the value with the given ID
     pub fn get_mut(&mut self, id: Id) -> Option<&mut T>
-    where
-        Id: Into<u32> + Copy,
-    {
+    where Id: Into<u32> + Copy {
         let index: u32 = id.into();
         self.items.get_mut(index as usize)
     }
 
     /// Get an iterator over the items
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.items.iter()
-    }
+    pub fn iter(&self) -> impl Iterator<Item = &T> { self.items.iter() }
 
     /// Get the number of items
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
+    pub fn len(&self) -> usize { self.items.len() }
 
     /// Check if the arena is empty
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.items.is_empty() }
 }
 
 #[cfg(test)]
@@ -65,9 +57,7 @@ mod tests {
     struct TestId(u32);
 
     impl From<TestId> for u32 {
-        fn from(id: TestId) -> u32 {
-            id.0
-        }
+        fn from(id: TestId) -> u32 { id.0 }
     }
 
     #[test]

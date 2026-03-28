@@ -24,7 +24,7 @@
   - Task 6：补全局 outwardness 校验
   - Task 7：跑完整回归矩阵并完成 crate 级验证
 - **未完成任务**：
-  - 无（仅剩 commit / push）
+  - 2026-03-28 审查修复已在本地完成，但尚未额外 commit / push
 
 ### 已落地实现
 
@@ -39,10 +39,13 @@
 9. `assemble_shells()` 现在对每个输出 shell **无条件执行** `Closed` 校验，不再依赖 `shell_faces_reused_original_boundaries(...)` 这类启发式 gate。
 10. `validate_shell_orientation()` 已接入 `assemble_shells()`：它按 face boundary 的真实顶点遍历顺序重建 probe loop，沿 oriented normal 做 `+/- probe`，并复用 `classify_point_in_solid()` 校验 `+normal -> Outside`、`-normal -> Inside`。
 11. `shell_orientation_rejects_closed_shell_with_inverted_faces` 的 red fixture 已改成**显式逐面 `invert()`**；原因是 `shell.inverse()` 在当前 `truck-topology` + trim pipeline 组合下，不能稳定表达“所有面 globally inward”的测试语义。
-12. source boundary edge id 当前采用**高位隔离的哈希 EdgeId**：
+12. source boundary edge id 已从**截断哈希**升级为**精确 key -> 顺序分配 EdgeId 的稳定 registry**：
    - `section_curve -> EdgeId(section_curve_id.0)`
-   - `source boundary -> EdgeId(0x8000_0000 | (hash(edge.id()) & 0x7fff_ffff))`
-   这样做的目的是先避免与 section curve 的低位 id 空间冲突；后续如果 `BopDs` 引入统一 edge registry，可再替换成更稳定的真实分配策略。
+   - `source boundary -> EdgeId(0x8000_0000 | sequence)`
+   - registry key 由 `edge.id()` 与 source boundary 的绝对端点坐标共同组成，避免了先前 31 位哈希带来的碰撞风险。
+13. `split_face_can_reuse_original_face()` 现在按 boundary edge 的**循环顺序**做匹配，不再只验证边集合相等，从而避免“边集相同但遍历关系不同”被错误判成可直接复用。
+14. `validate_shell_orientation()` 的 face probe 已升级为：基于 face 全部 boundary 在局部平面内投影、寻找**落在 outer 内且不落入 holes** 的 sample point，再做 `+/- normal` 的 inside/outside 校验；不再直接使用首条 boundary 顶点平均值。
+15. 为保证 release 构建通过，旧的 split-face adjacency helper 已移到 `#[cfg(test)]`，同时对当前仍作为占位的 `Arena` / `CommonBlock` / `FaceInfo` / `PipelineReport` 做了显式 `dead_code` 标注。
 
 ### 当前已验证通过的增量测试
 
@@ -84,10 +87,15 @@
 - 当前已完成的更大范围验证：
   - Task 7 关键回归矩阵全部通过
   - `cargo test -p truck-bop` 全量通过（`138 passed, 4 ignored`）
+  - `cargo check -p truck-bop` 通过（仅剩 future-incompat dependency 提示）
+  - `cargo check --release -p truck-bop` 通过（仅剩 future-incompat dependency 提示）
 - 当前仍未处理的只剩工程性收尾：
-  - 尚未 commit / push
+  - 2026-03-28 审查修复尚未额外 commit / push
   - `docs/plans/2026-03-24-truck-bop-shell-assembly-repair.md` 已补 `superseded by v2` 标记
-- `cargo check -p truck-bop` 当前为 `0 errors, 10 warnings`；这些 warning 仍以既有未使用结构/未来兼容提示为主，不是本轮逻辑修复引入的新业务回归。
+- 当前已消除的审查问题：
+  - release 构建不再因为 dead helper / placeholder 结构体而失败
+  - source boundary provenance 不再依赖截断哈希
+  - outwardness probe 不再只基于首条 boundary 顶点平均值
 
 ---
 
@@ -520,7 +528,7 @@ Run:
 
 如有残余 dead helper、临时调试输出、重复转换逻辑，在这个任务里一次性清理，但不要额外扩 scope。
 
-> 2026-03-28 结果：`cargo test -p truck-bop` 已全绿（`138 passed, 4 ignored`）。本轮没有进一步清 warning，只保留事实说明：当前仍有既有未使用 helper / 结构体 warning，不影响本次功能回归。
+> 2026-03-28 结果：`cargo test -p truck-bop` 已全绿（`138 passed, 4 ignored`）；后续审查修复后，`cargo check -p truck-bop` 与 `cargo check --release -p truck-bop` 也已通过，当前仅剩 dependency future-incompat 提示。
 
 - [x] **Step 4: 如果旧计划已过期，标注 superseded**
 

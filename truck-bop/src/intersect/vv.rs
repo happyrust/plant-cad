@@ -44,7 +44,10 @@ mod tests {
 
     #[test]
     fn vv_intersection_detects_coincident_vertices() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertices = vec![
             (VertexId(0), Vertex::new(Point3::new(0.0, 0.0, 0.0))),
             (VertexId(1), Vertex::new(Point3::new(0.0, 0.0, 0.0))),
@@ -53,12 +56,21 @@ mod tests {
         let count = intersect_vv(&mut bopds, &vertices, &[(VertexId(0), VertexId(1))]);
 
         assert_eq!(count, 1);
-        assert_eq!(bopds.vv_interferences(), &[VVInterference { vertex1: VertexId(0), vertex2: VertexId(1) }]);
+        assert_eq!(
+            bopds.vv_interferences(),
+            &[VVInterference {
+                vertex1: VertexId(0),
+                vertex2: VertexId(1)
+            }]
+        );
     }
 
     #[test]
     fn vv_intersection_detects_vertices_within_tolerance() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.05, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.05,
+            ..BopOptions::default()
+        });
         let vertices = vec![
             (VertexId(0), Vertex::new(Point3::new(0.0, 0.0, 0.0))),
             (VertexId(1), Vertex::new(Point3::new(0.03, 0.0, 0.0))),
@@ -67,12 +79,21 @@ mod tests {
         let count = intersect_vv(&mut bopds, &vertices, &[(VertexId(0), VertexId(1))]);
 
         assert_eq!(count, 1);
-        assert_eq!(bopds.vv_interferences(), &[VVInterference { vertex1: VertexId(0), vertex2: VertexId(1) }]);
+        assert_eq!(
+            bopds.vv_interferences(),
+            &[VVInterference {
+                vertex1: VertexId(0),
+                vertex2: VertexId(1)
+            }]
+        );
     }
 
     #[test]
     fn vv_intersection_ignores_vertices_beyond_tolerance() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.01, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        });
         let vertices = vec![
             (VertexId(0), Vertex::new(Point3::new(0.0, 0.0, 0.0))),
             (VertexId(1), Vertex::new(Point3::new(0.03, 0.0, 0.0))),

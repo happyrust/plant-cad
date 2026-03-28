@@ -17,7 +17,12 @@ pub struct Pave {
 
 impl Pave {
     /// Create a new pave
-    pub fn new(edge: EdgeId, vertex: VertexId, parameter: f64, tolerance: f64) -> Result<Self, BopError> {
+    pub fn new(
+        edge: EdgeId,
+        vertex: VertexId,
+        parameter: f64,
+        tolerance: f64,
+    ) -> Result<Self, BopError> {
         if tolerance <= 0.0 {
             return Err(BopError::InvalidTolerance);
         }

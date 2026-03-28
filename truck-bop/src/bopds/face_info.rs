@@ -3,6 +3,7 @@
 use crate::{PaveBlockId, VertexId};
 
 /// Face information
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct FaceInfo {
     /// Vertices on this face

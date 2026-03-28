@@ -23,8 +23,7 @@ impl BoundingProvider for Vertex<Point3> {
 }
 
 impl<C> BoundingProvider for Edge<Point3, C>
-where
-    C: Clone + BoundedCurve<Point = Point3> + Invertible,
+where C: Clone + BoundedCurve<Point = Point3> + Invertible
 {
     fn bounding_box(&self, options: &BopOptions) -> BoundingBox<Point3> {
         let curve = self.oriented_curve();
@@ -71,8 +70,7 @@ impl FaceBoundingSurface for () {
 fn face_boundary_box<C, S>(face: &Face<Point3, C, S>) -> BoundingBox<Point3>
 where
     C: Clone + BoundedCurve<Point = Point3> + Invertible,
-    S: Clone,
-{
+    S: Clone, {
     let mut bbox = BoundingBox::new();
     for edge in face.boundary_iters().into_iter().flatten() {
         let curve = edge.oriented_curve();
@@ -99,16 +97,12 @@ fn expand_bbox(bbox: BoundingBox<Point3>, tolerance: f64) -> BoundingBox<Point3>
 }
 
 fn curve_endpoints_bbox<C>(curve: &C) -> BoundingBox<Point3>
-where
-    C: BoundedCurve<Point = Point3>,
-{
+where C: BoundedCurve<Point = Point3> {
     BoundingBox::from_iter([curve.front(), curve.back()])
 }
 
 fn sample_curve_bbox<C>(curve: &C) -> BoundingBox<Point3>
-where
-    C: BoundedCurve<Point = Point3>,
-{
+where C: BoundedCurve<Point = Point3> {
     let (t0, t1) = curve.range_tuple();
     sample_1d_bbox(|i| {
         let t = interpolate(t0, t1, i, SAMPLE_COUNT);
@@ -117,9 +111,7 @@ where
 }
 
 fn sample_1d_bbox<F>(mut sampler: F) -> BoundingBox<Point3>
-where
-    F: FnMut(usize) -> Point3,
-{
+where F: FnMut(usize) -> Point3 {
     let mut bbox = BoundingBox::new();
     for i in 0..=SAMPLE_COUNT {
         bbox.push(sampler(i));
@@ -128,9 +120,7 @@ where
 }
 
 fn sample_surface_bbox<S>(surface: &S) -> Option<BoundingBox<Point3>>
-where
-    S: ParametricSurface<Point = Point3>,
-{
+where S: ParametricSurface<Point = Point3> {
     let (Some((u0, u1)), Some((v0, v1))) = surface.try_range_tuple() else {
         return None;
     };
@@ -164,7 +154,10 @@ mod tests {
 
     #[test]
     fn bounding_provider_vertex_expands_point_by_tolerance() {
-        let options = BopOptions { geometric_tol: 0.25, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.25,
+            ..BopOptions::default()
+        };
         let vertex = Vertex::new(Point3::new(1.0, -2.0, 3.0));
 
         let bbox = vertex.bounding_box(&options);
@@ -177,7 +170,10 @@ mod tests {
 
     #[test]
     fn bounding_provider_edge_contains_sampled_curve_points_and_expansion() {
-        let options = BopOptions { geometric_tol: 0.1, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.1,
+            ..BopOptions::default()
+        };
         let vertices = builder::vertices([
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 1.0, 0.0),
@@ -200,7 +196,10 @@ mod tests {
 
     #[test]
     fn bounding_provider_face_contains_surface_samples_and_expansion() {
-        let options = BopOptions { geometric_tol: 0.2, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.2,
+            ..BopOptions::default()
+        };
         let vertices = builder::vertices([
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),
@@ -217,7 +216,8 @@ mod tests {
 
         let bbox = face.bounding_box(&options);
         let surface: truck_modeling::Surface = face.oriented_surface();
-        let mut raw_bbox = sample_surface_bbox(&surface).expect("homotopy surface should be bounded");
+        let mut raw_bbox =
+            sample_surface_bbox(&surface).expect("homotopy surface should be bounded");
         for edge in face.boundary_iters().into_iter().flatten() {
             let curve = edge.oriented_curve();
             raw_bbox += sample_curve_bbox(&curve);
@@ -240,7 +240,10 @@ mod tests {
 
     #[test]
     fn face_bounding_box_without_surface_falls_back_to_boundary() {
-        let options = BopOptions { geometric_tol: 0.05, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.05,
+            ..BopOptions::default()
+        };
         let vertices = builder::vertices([
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),
@@ -260,7 +263,13 @@ mod tests {
             raw_boundary_bbox += curve_endpoints_bbox(&curve);
         }
 
-        assert_eq!(bbox.min(), raw_boundary_bbox.min() - Vector3::new(0.05, 0.05, 0.05));
-        assert_eq!(bbox.max(), raw_boundary_bbox.max() + Vector3::new(0.05, 0.05, 0.05));
+        assert_eq!(
+            bbox.min(),
+            raw_boundary_bbox.min() - Vector3::new(0.05, 0.05, 0.05)
+        );
+        assert_eq!(
+            bbox.max(),
+            raw_boundary_bbox.max() + Vector3::new(0.05, 0.05, 0.05)
+        );
     }
 }

@@ -13,8 +13,8 @@
 
 //! Boolean operation infrastructure for truck
 
-mod bounding;
 mod bopds;
+mod bounding;
 mod broad_phase;
 mod error;
 mod intersect;
@@ -22,25 +22,24 @@ mod options;
 mod pipeline;
 mod trim;
 
-pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use bopds::{
-    BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId,
-    SectionCurveId, SewnEdge, SewnPath, ShapeId, SplitFace, VertexId,
+    BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId, SectionCurveId,
+    SewnEdge, SewnPath, ShapeId, SplitFace, VertexId,
 };
-pub use broad_phase::{CandidatePairs, generate_candidate_pairs, generate_candidate_pairs_from_bopds};
+pub use bounding::{BoundingProvider, FaceBoundingSurface};
+pub use broad_phase::{
+    generate_candidate_pairs, generate_candidate_pairs_from_bopds, CandidatePairs,
+};
 pub use error::BopError;
-pub use intersect::{intersect_ee, intersect_ef, intersect_ff, intersect_ve, intersect_vf, intersect_vv};
+pub use intersect::{
+    intersect_ee, intersect_ef, intersect_ff, intersect_ve, intersect_vf, intersect_vv,
+};
 pub use options::BopOptions;
-pub use pipeline::{BooleanOp, PointClassification, classify_point_in_solid};
+pub use pipeline::{classify_point_in_solid, BooleanOp, PointClassification};
 pub use trim::{
-    assemble_shells,
-    build_solids_from_shells,
-    build_split_faces,
-    build_trimming_loops,
-    classify_split_faces_against_operand,
-    merge_equivalent_vertices,
-    sew_fragment_edges,
-    select_split_faces_for_boolean_op,
+    assemble_shells, build_solids_from_shells, build_split_faces, build_trimming_loops,
+    classify_split_faces_against_operand, merge_equivalent_vertices,
+    select_split_faces_for_boolean_op, sew_fragment_edges,
 };
 
 /// Common (intersection) operation stub

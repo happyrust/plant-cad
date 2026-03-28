@@ -1,7 +1,10 @@
 //! Boolean operation pipeline
 
 use crate::BopError;
-use truck_base::{bounding_box::BoundingBox, cgmath64::{Point3, Vector3}};
+use truck_base::{
+    bounding_box::BoundingBox,
+    cgmath64::{Point3, Vector3},
+};
 use truck_topology::{Face, Shell, Solid};
 
 /// Boolean operation type
@@ -18,6 +21,7 @@ pub enum BooleanOp {
 }
 
 /// Pipeline execution report
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct PipelineReport;
 
@@ -61,14 +65,19 @@ where
     })
 }
 
-fn expect_single_shell<C, S>(solid: &Solid<Point3, C, S>) -> Result<&Shell<Point3, C, S>, BopError> {
+fn expect_single_shell<C, S>(
+    solid: &Solid<Point3, C, S>,
+) -> Result<&Shell<Point3, C, S>, BopError> {
     match solid.boundaries().as_slice() {
         [shell] => Ok(shell),
         _ => Err(BopError::UnsupportedGeometry),
     }
 }
 
-fn axis_aligned_box_bounds<C, S>(shell: &Shell<Point3, C, S>, tolerance: f64) -> Result<BoundingBox<Point3>, BopError>
+fn axis_aligned_box_bounds<C, S>(
+    shell: &Shell<Point3, C, S>,
+    tolerance: f64,
+) -> Result<BoundingBox<Point3>, BopError>
 where
     C: Clone,
     S: Clone,
@@ -83,7 +92,9 @@ where
     }
 
     for face in shell.face_iter() {
-        let Some((normal_axis, normal_value, in_plane_axes)) = face_axis_alignment(face, &bounds, tolerance) else {
+        let Some((normal_axis, normal_value, in_plane_axes)) =
+            face_axis_alignment(face, &bounds, tolerance)
+        else {
             return Err(BopError::UnsupportedGeometry);
         };
 
@@ -98,7 +109,9 @@ where
             }
             for axis in in_plane_axes {
                 let value = axis_value(vertex, axis);
-                if value < axis_min(&bounds, axis) - tolerance || value > axis_max(&bounds, axis) + tolerance {
+                if value < axis_min(&bounds, axis) - tolerance
+                    || value > axis_max(&bounds, axis) + tolerance
+                {
                     return Err(BopError::UnsupportedGeometry);
                 }
             }
@@ -149,7 +162,8 @@ where
 
     for axis in in_plane_axes {
         let value = axis_value(point, axis);
-        if value < axis_min(bounds, axis) - tolerance || value > axis_max(bounds, axis) + tolerance {
+        if value < axis_min(bounds, axis) - tolerance || value > axis_max(bounds, axis) + tolerance
+        {
             return None;
         }
     }
@@ -186,7 +200,10 @@ where
 
     for axis in 0..3 {
         let constant = axis_value(first, axis);
-        if !vertices.iter().all(|vertex| near(axis_value(*vertex, axis), constant, tolerance)) {
+        if !vertices
+            .iter()
+            .all(|vertex| near(axis_value(*vertex, axis), constant, tolerance))
+        {
             continue;
         }
 
@@ -208,7 +225,9 @@ where
                 .iter()
                 .map(|vertex| axis_value(*vertex, in_plane_axis))
                 .fold(f64::NEG_INFINITY, f64::max);
-            if !near(face_min, axis_min_value, tolerance) || !near(face_max, axis_max_value, tolerance) {
+            if !near(face_min, axis_min_value, tolerance)
+                || !near(face_max, axis_max_value, tolerance)
+            {
                 return None;
             }
         }
@@ -268,30 +287,39 @@ mod tests {
 
     #[test]
     fn point_classification_returns_inside_for_box_center() {
-        let solid: Solid<Point3, Curve, Surface> =
-            primitive::cuboid(BoundingBox::from_iter([Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 3.0, 4.0)]));
+        let solid: Solid<Point3, Curve, Surface> = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 3.0, 4.0),
+        ]));
 
-        let classification = classify_point_in_solid(&solid, Point3::new(1.0, 1.5, 2.0), 1.0e-6).unwrap();
+        let classification =
+            classify_point_in_solid(&solid, Point3::new(1.0, 1.5, 2.0), 1.0e-6).unwrap();
 
         assert_eq!(classification, PointClassification::Inside);
     }
 
     #[test]
     fn point_classification_returns_outside_for_point_beyond_box() {
-        let solid: Solid<Point3, Curve, Surface> =
-            primitive::cuboid(BoundingBox::from_iter([Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 3.0, 4.0)]));
+        let solid: Solid<Point3, Curve, Surface> = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 3.0, 4.0),
+        ]));
 
-        let classification = classify_point_in_solid(&solid, Point3::new(2.5, 1.5, 2.0), 1.0e-6).unwrap();
+        let classification =
+            classify_point_in_solid(&solid, Point3::new(2.5, 1.5, 2.0), 1.0e-6).unwrap();
 
         assert_eq!(classification, PointClassification::Outside);
     }
 
     #[test]
     fn point_classification_returns_on_boundary_for_face_point() {
-        let solid: Solid<Point3, Curve, Surface> =
-            primitive::cuboid(BoundingBox::from_iter([Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 3.0, 4.0)]));
+        let solid: Solid<Point3, Curve, Surface> = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 3.0, 4.0),
+        ]));
 
-        let classification = classify_point_in_solid(&solid, Point3::new(0.0, 1.5, 2.0), 1.0e-6).unwrap();
+        let classification =
+            classify_point_in_solid(&solid, Point3::new(0.0, 1.5, 2.0), 1.0e-6).unwrap();
 
         assert_eq!(classification, PointClassification::OnBoundary);
     }
@@ -301,7 +329,8 @@ mod tests {
     fn point_classification_rotated_box_center_is_inside() {
         let solid = rotated_box();
 
-        let classification = classify_point_in_solid(&solid, Point3::new(0.0, 0.0, 0.5), 1.0e-6).unwrap();
+        let classification =
+            classify_point_in_solid(&solid, Point3::new(0.0, 0.0, 0.5), 1.0e-6).unwrap();
 
         assert_eq!(classification, PointClassification::Inside);
     }
@@ -311,7 +340,8 @@ mod tests {
     fn point_classification_rotated_box_face_point_is_boundary() {
         let solid = rotated_box();
 
-        let classification = classify_point_in_solid(&solid, Point3::new(0.5, 0.0, 0.5), 1.0e-6).unwrap();
+        let classification =
+            classify_point_in_solid(&solid, Point3::new(0.5, 0.0, 0.5), 1.0e-6).unwrap();
 
         assert_eq!(classification, PointClassification::OnBoundary);
     }
@@ -367,7 +397,11 @@ mod tests {
             Point3::new(-1.0, 0.0, z),
         );
         let face = Face::new(vec![wire], Surface::Plane(plane));
-        if top { face } else { face.inverse() }
+        if top {
+            face
+        } else {
+            face.inverse()
+        }
     }
 
     fn rotated_wire(z: f64, reverse: bool) -> Wire<Point3, Curve> {

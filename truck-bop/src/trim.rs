@@ -9,8 +9,7 @@ use crate::{
     SectionCurveId, VertexId,
 };
 use rustc_hash::FxHashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 use truck_base::cgmath64::{MetricSpace, Point2, Point3, Vector3};
 use truck_geotrait::{Invertible, SearchParameter, D2};
 use truck_topology::shell::ShellCondition;
@@ -357,6 +356,7 @@ where
     Ok(shells)
 }
 
+#[cfg(test)]
 fn connected_face_components(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     let adjacency = component_adjacency(split_faces);
     let mut visited = vec![false; split_faces.len()];
@@ -389,6 +389,7 @@ fn connected_face_components(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     components
 }
 
+#[cfg(test)]
 fn component_adjacency(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     let topologies = split_faces
         .iter()
@@ -397,6 +398,7 @@ fn component_adjacency(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     build_face_adjacency(split_faces, &topologies, split_faces_share_component)
 }
 
+#[cfg(test)]
 fn orientation_adjacency(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     let topologies = split_faces
         .iter()
@@ -405,6 +407,7 @@ fn orientation_adjacency(split_faces: &[SplitFace]) -> Vec<Vec<usize>> {
     build_face_adjacency(split_faces, &topologies, split_faces_share_orientable_edge)
 }
 
+#[cfg(test)]
 fn build_face_adjacency(
     split_faces: &[SplitFace],
     topologies: &[RebuiltFaceTopology],
@@ -617,9 +620,7 @@ where
                 .iter()
                 .enumerate()
                 .find(|(index, boundary)| {
-                    !matched[*index]
-                        && boundary.len() == loop_edges.len()
-                        && loop_edges.iter().all(|edge_id| boundary.contains(edge_id))
+                    !matched[*index] && cyclic_edge_sequence_matches(boundary, &loop_edges)
                 })
         else {
             return false;
@@ -698,50 +699,156 @@ where
         + Invertible,
     S: Clone,
 {
-    let vertices = collect_face_vertices(face);
-    if vertices.len() < 3 {
+    let boundaries = collect_face_boundaries(face);
+    let Some(outer_boundary) = boundaries.first() else {
+        return Err(BopError::TopologyInvariantBroken);
+    };
+    if outer_boundary.len() < 3 {
         return Err(BopError::TopologyInvariantBroken);
     }
 
-    let normal = oriented_face_normal(&vertices)?;
+    let normal = oriented_face_normal(outer_boundary)?;
     let length = vector_length(normal);
     if length <= f64::EPSILON {
         return Err(BopError::TopologyInvariantBroken);
     }
 
-    Ok((
-        average_point(vertices.iter().copied()),
-        scale_vector(normal, probe_distance / length),
-    ))
+    let sample_point = face_interior_sample_point(&boundaries, normal)?;
+
+    Ok((sample_point, scale_vector(normal, probe_distance / length)))
 }
 
-fn collect_face_vertices<C, S>(face: &Face<Point3, C, S>) -> Vec<Point3>
+fn collect_face_boundaries<C, S>(face: &Face<Point3, C, S>) -> Vec<Vec<Point3>>
 where
     C: Clone
         + truck_geotrait::ParametricCurve<Point = Point3>
         + truck_geotrait::BoundedCurve
         + Invertible,
     S: Clone, {
-    let mut vertices = Vec::new();
-    let Some(boundary) = face.boundaries().into_iter().next() else {
-        return vertices;
-    };
+    face.boundaries()
+        .into_iter()
+        .map(|boundary| {
+            let mut vertices = Vec::new();
+            for point in boundary.vertex_iter().map(|vertex| vertex.point()) {
+                if vertices.last().is_some_and(|previous: &Point3| {
+                    previous.distance2(point) <= ORIENTATION_TOLERANCE * ORIENTATION_TOLERANCE
+                }) {
+                    continue;
+                }
+                vertices.push(point);
+            }
+            if vertices.len() >= 2
+                && vertices[0].distance2(*vertices.last().unwrap())
+                    <= ORIENTATION_TOLERANCE * ORIENTATION_TOLERANCE
+            {
+                vertices.pop();
+            }
+            vertices
+        })
+        .filter(|boundary| boundary.len() >= 3)
+        .collect()
+}
 
-    for point in boundary.vertex_iter().map(|vertex| vertex.point()) {
-        if vertices.last().is_some_and(|previous: &Point3| {
-            previous.distance2(point) <= ORIENTATION_TOLERANCE * ORIENTATION_TOLERANCE
-        }) {
-            continue;
-        }
-        vertices.push(point);
-    }
-    if vertices.len() >= 2
-        && vertices[0].distance2(*vertices.last().unwrap())
-            <= ORIENTATION_TOLERANCE * ORIENTATION_TOLERANCE
+fn face_interior_sample_point(
+    boundaries: &[Vec<Point3>],
+    normal: Vector3,
+) -> Result<Point3, BopError> {
+    let Some(outer_boundary) = boundaries.first() else {
+        return Err(BopError::TopologyInvariantBroken);
+    };
+    let origin = outer_boundary[0];
+    let unit_normal = scale_vector(normal, 1.0 / vector_length(normal));
+    let (tangent, bitangent) = plane_basis(unit_normal)?;
+    let projected_boundaries = boundaries
+        .iter()
+        .map(|boundary| {
+            boundary
+                .iter()
+                .map(|point| project_point_to_plane(*point, origin, tangent, bitangent))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(sample) = polygon_centroid(&projected_boundaries[0])
+        .filter(|candidate| point_in_face_region(&projected_boundaries, *candidate))
     {
-        vertices.pop();
+        return Ok(lift_point_from_plane(sample, origin, tangent, bitangent));
     }
-    vertices
+
+    for index in 1..outer_boundary.len().saturating_sub(1) {
+        let candidate = average_point(
+            [
+                outer_boundary[0],
+                outer_boundary[index],
+                outer_boundary[index + 1],
+            ]
+            .into_iter(),
+        );
+        let projected = project_point_to_plane(candidate, origin, tangent, bitangent);
+        if point_in_face_region(&projected_boundaries, projected) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(BopError::TopologyInvariantBroken)
+}
+
+fn point_in_face_region(boundaries: &[Vec<Point2>], point: Point2) -> bool {
+    let Some(outer_boundary) = boundaries.first() else {
+        return false;
+    };
+    if point_on_polygon_boundary(outer_boundary, point) || !point_in_polygon(outer_boundary, point)
+    {
+        return false;
+    }
+
+    boundaries
+        .iter()
+        .skip(1)
+        .all(|hole| !point_on_polygon_boundary(hole, point) && !point_in_polygon(hole, point))
+}
+
+fn plane_basis(normal: Vector3) -> Result<(Vector3, Vector3), BopError> {
+    let reference = if normal.x.abs() < 0.9 {
+        Vector3::unit_x()
+    } else {
+        Vector3::unit_y()
+    };
+    let tangent = cross(normal, reference);
+    let tangent_length = vector_length(tangent);
+    if tangent_length <= f64::EPSILON {
+        return Err(BopError::TopologyInvariantBroken);
+    }
+    let tangent = scale_vector(tangent, 1.0 / tangent_length);
+    let bitangent = cross(normal, tangent);
+    let bitangent_length = vector_length(bitangent);
+    if bitangent_length <= f64::EPSILON {
+        return Err(BopError::TopologyInvariantBroken);
+    }
+    Ok((tangent, scale_vector(bitangent, 1.0 / bitangent_length)))
+}
+
+fn project_point_to_plane(
+    point: Point3,
+    origin: Point3,
+    tangent: Vector3,
+    bitangent: Vector3,
+) -> Point2 {
+    let offset = point - origin;
+    Point2::new(dot(offset, tangent), dot(offset, bitangent))
+}
+
+fn lift_point_from_plane(
+    point: Point2,
+    origin: Point3,
+    tangent: Vector3,
+    bitangent: Vector3,
+) -> Point3 {
+    Point3::new(
+        origin.x + tangent.x * point.x + bitangent.x * point.y,
+        origin.y + tangent.y * point.x + bitangent.y * point.y,
+        origin.z + tangent.z * point.x + bitangent.z * point.y,
+    )
 }
 
 fn oriented_face_normal(vertices: &[Point3]) -> Result<Vector3, BopError> {
@@ -766,6 +873,8 @@ fn cross(lhs: Vector3, rhs: Vector3) -> Vector3 {
         lhs.x * rhs.y - lhs.y * rhs.x,
     )
 }
+
+fn dot(lhs: Vector3, rhs: Vector3) -> f64 { lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z }
 
 fn vector_length(vector: Vector3) -> f64 {
     (vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).sqrt()
@@ -959,9 +1068,60 @@ fn edge_id_from_section_curve(section_curve_id: SectionCurveId) -> EdgeId {
 }
 
 fn edge_id_from_source_boundary<C>(edge: &truck_topology::Edge<Point3, C>) -> EdgeId {
-    let mut hasher = DefaultHasher::new();
-    edge.id().hash(&mut hasher);
-    EdgeId(0x8000_0000 | ((hasher.finish() as u32) & 0x7fff_ffff))
+    let key = source_boundary_edge_key(edge);
+    let mut registry = source_boundary_edge_registry()
+        .lock()
+        .expect("source boundary edge registry poisoned");
+    registry.edge_id_for_key(key)
+}
+
+fn source_boundary_edge_key<C>(edge: &truck_topology::Edge<Point3, C>) -> String {
+    let (start, end) =
+        ordered_point_pair(edge.absolute_front().point(), edge.absolute_back().point());
+    format!(
+        "{:?}|{:.17e},{:.17e},{:.17e}|{:.17e},{:.17e},{:.17e}",
+        edge.id(),
+        start.x,
+        start.y,
+        start.z,
+        end.x,
+        end.y,
+        end.z,
+    )
+}
+
+fn ordered_point_pair(first: Point3, second: Point3) -> (Point3, Point3) {
+    if compare_point3(first, second).is_le() {
+        (first, second)
+    } else {
+        (second, first)
+    }
+}
+
+fn compare_point3(lhs: Point3, rhs: Point3) -> std::cmp::Ordering {
+    lhs.x
+        .total_cmp(&rhs.x)
+        .then(lhs.y.total_cmp(&rhs.y))
+        .then(lhs.z.total_cmp(&rhs.z))
+}
+
+fn cyclic_edge_sequence_matches(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
+    expected.len() == actual.len()
+        && (cyclically_aligned(expected, actual)
+            || cyclically_aligned(expected, &actual.iter().rev().copied().collect::<Vec<_>>()))
+}
+
+fn cyclically_aligned(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
+    if expected.is_empty() {
+        return true;
+    }
+
+    (0..actual.len()).any(|offset| {
+        expected
+            .iter()
+            .enumerate()
+            .all(|(index, edge_id)| *edge_id == actual[(index + offset) % actual.len()])
+    })
 }
 
 fn next_edge_index(edges: &[SewnEdge], used: &[bool], vertex: VertexId) -> Option<usize> {
@@ -1213,6 +1373,36 @@ fn average_point(points: impl Iterator<Item = Point3>) -> Point3 {
         count += 1.0;
     }
     Point3::new(sum.x / count, sum.y / count, sum.z / count)
+}
+
+const SOURCE_BOUNDARY_EDGE_NAMESPACE_START: u32 = 0x8000_0000;
+
+#[derive(Default)]
+struct SourceBoundaryEdgeRegistry {
+    ids: FxHashMap<String, EdgeId>,
+    next_id: u32,
+}
+
+impl SourceBoundaryEdgeRegistry {
+    fn edge_id_for_key(&mut self, key: String) -> EdgeId {
+        if let Some(edge_id) = self.ids.get(&key) {
+            return *edge_id;
+        }
+
+        assert!(
+            self.next_id < SOURCE_BOUNDARY_EDGE_NAMESPACE_START,
+            "source boundary edge registry exhausted"
+        );
+        let edge_id = EdgeId(SOURCE_BOUNDARY_EDGE_NAMESPACE_START | self.next_id);
+        self.next_id += 1;
+        self.ids.insert(key, edge_id);
+        edge_id
+    }
+}
+
+fn source_boundary_edge_registry() -> &'static Mutex<SourceBoundaryEdgeRegistry> {
+    static REGISTRY: OnceLock<Mutex<SourceBoundaryEdgeRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(SourceBoundaryEdgeRegistry::default()))
 }
 
 fn build_loops_for_face<C, S>(

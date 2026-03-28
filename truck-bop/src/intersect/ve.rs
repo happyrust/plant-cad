@@ -1,8 +1,11 @@
 //! Vertex-edge intersection detection.
 
-use crate::{bopds::{Pave, VEInterference}, BopDs, EdgeId, VertexId};
+use crate::{
+    bopds::{Pave, VEInterference},
+    BopDs, EdgeId, VertexId,
+};
 use truck_base::cgmath64::{MetricSpace, Point3};
-use truck_geotrait::{BoundedCurve, D1, Invertible, SearchNearestParameter};
+use truck_geotrait::{BoundedCurve, Invertible, SearchNearestParameter, D1};
 use truck_topology::{Edge, Vertex};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
@@ -15,7 +18,10 @@ pub fn intersect_ve<C>(
     candidates: &[(VertexId, EdgeId)],
 ) -> usize
 where
-    C: Clone + BoundedCurve<Point = Point3> + Invertible + SearchNearestParameter<D1, Point = Point3>,
+    C: Clone
+        + BoundedCurve<Point = Point3>
+        + Invertible
+        + SearchNearestParameter<D1, Point = Point3>,
 {
     let tolerance = bopds.options().geometric_tol;
     let tolerance_sq = tolerance * tolerance;
@@ -31,7 +37,9 @@ where
 
         let curve = edge.oriented_curve();
         let (start, end) = curve.range_tuple();
-        let Some(parameter) = curve.search_nearest_parameter(point, (start, end), SEARCH_PARAMETER_TRIALS) else {
+        let Some(parameter) =
+            curve.search_nearest_parameter(point, (start, end), SEARCH_PARAMETER_TRIALS)
+        else {
             continue;
         };
         if parameter < start || parameter > end {
@@ -65,7 +73,10 @@ fn vertex_point(vertices: &[(VertexId, Vertex<Point3>)], vertex_id: VertexId) ->
 }
 
 fn edge_by_id<C>(edges: &[(EdgeId, Edge<Point3, C>)], edge_id: EdgeId) -> Option<&Edge<Point3, C>> {
-    edges.iter().find(|(id, _)| *id == edge_id).map(|(_, edge)| edge)
+    edges
+        .iter()
+        .find(|(id, _)| *id == edge_id)
+        .map(|(_, edge)| edge)
 }
 
 #[cfg(test)]
@@ -76,7 +87,10 @@ mod tests {
 
     #[test]
     fn ve_intersection_detects_vertex_on_edge_and_generates_pave() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.25, 0.0, 0.0));
         let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
@@ -88,17 +102,26 @@ mod tests {
         );
 
         assert_eq!(count, 1);
-        assert_eq!(bopds.ve_interferences(), &[VEInterference {
-            vertex: VertexId(0),
-            edge: EdgeId(10),
-            parameter: 0.25,
-        }]);
-        assert_eq!(bopds.paves(), &[Pave::new(EdgeId(10), VertexId(0), 0.25, 1.0e-3).unwrap()]);
+        assert_eq!(
+            bopds.ve_interferences(),
+            &[VEInterference {
+                vertex: VertexId(0),
+                edge: EdgeId(10),
+                parameter: 0.25,
+            }]
+        );
+        assert_eq!(
+            bopds.paves(),
+            &[Pave::new(EdgeId(10), VertexId(0), 0.25, 1.0e-3).unwrap()]
+        );
     }
 
     #[test]
     fn ve_intersection_detects_vertex_within_tolerance() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.01, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.5, 0.005, 0.0));
         let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
@@ -117,7 +140,10 @@ mod tests {
 
     #[test]
     fn ve_intersection_ignores_vertex_beyond_tolerance() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.01, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.5, 0.03, 0.0));
         let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
@@ -135,7 +161,10 @@ mod tests {
 
     #[test]
     fn ve_intersection_ignores_vertex_projecting_beyond_edge_bounds() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 0.2, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 0.2,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(1.15, 0.0, 0.0));
         let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 
@@ -153,7 +182,10 @@ mod tests {
 
     #[test]
     fn ve_intersection_generates_pave_within_edge_bounds() {
-        let mut bopds = BopDs::with_options(BopOptions { geometric_tol: 1.0e-3, ..BopOptions::default() });
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
         let vertex = Vertex::new(Point3::new(0.8, 0.0, 0.0));
         let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
 

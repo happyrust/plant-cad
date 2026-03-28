@@ -18,7 +18,10 @@ pub fn intersect_ee<C>(
     options: &BopOptions,
 ) -> Result<Vec<(EdgeId, EdgeId, f64, f64)>, BopError>
 where
-    C: Clone + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff> + BoundedCurve + Invertible,
+    C: Clone
+        + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+        + BoundedCurve
+        + Invertible,
 {
     let curve_a = edge_a.oriented_curve();
     let curve_b = edge_b.oriented_curve();
@@ -29,15 +32,25 @@ where
 
     let mut intersections = Vec::new();
 
-    if let Some((t_a, t_b)) = refine_intersection(&curve_a, &curve_b, range_a, range_b, tolerance_sq) {
-        push_unique_intersection(&mut intersections, edge_a_id, edge_b_id, t_a, t_b, tolerance);
+    if let Some((t_a, t_b)) =
+        refine_intersection(&curve_a, &curve_b, range_a, range_b, tolerance_sq)
+    {
+        push_unique_intersection(
+            &mut intersections,
+            edge_a_id,
+            edge_b_id,
+            t_a,
+            t_b,
+            tolerance,
+        );
         return Ok(intersections);
     }
 
     for t_a in interior_sample_parameters(range_a, SAMPLE_DIVISION) {
         let point = curve_a.subs(t_a);
         let hint_b = curve::presearch(&curve_b, point, range_b, PRESEARCH_DIVISION);
-        let Some(t_b) = curve::search_parameter(&curve_b, point, hint_b, SEARCH_PARAMETER_TRIALS) else {
+        let Some(t_b) = curve::search_parameter(&curve_b, point, hint_b, SEARCH_PARAMETER_TRIALS)
+        else {
             continue;
         };
         if !parameter_in_range(t_b, range_b, tolerance) {
@@ -46,7 +59,14 @@ where
         if curve_a.subs(t_a).distance2(curve_b.subs(t_b)) > tolerance_sq {
             continue;
         }
-        push_unique_intersection(&mut intersections, edge_a_id, edge_b_id, t_a, t_b, tolerance);
+        push_unique_intersection(
+            &mut intersections,
+            edge_a_id,
+            edge_b_id,
+            t_a,
+            t_b,
+            tolerance,
+        );
     }
 
     Ok(intersections)
@@ -62,15 +82,27 @@ fn refine_intersection<C>(
 where
     C: ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>,
 {
-    let hint = curve::presearch_closest_point::<Point3, _, _>(curve_a, curve_b, (range_a, range_b), PRESEARCH_DIVISION);
-    let (t_a, t_b) = curve::search_intersection_parameter::<Point3, _, _>(curve_a, curve_b, hint, SEARCH_PARAMETER_TRIALS)?;
+    let hint = curve::presearch_closest_point::<Point3, _, _>(
+        curve_a,
+        curve_b,
+        (range_a, range_b),
+        PRESEARCH_DIVISION,
+    );
+    let (t_a, t_b) = curve::search_intersection_parameter::<Point3, _, _>(
+        curve_a,
+        curve_b,
+        hint,
+        SEARCH_PARAMETER_TRIALS,
+    )?;
     (curve_a.subs(t_a).distance2(curve_b.subs(t_b)) <= tolerance_sq).then_some((t_a, t_b))
 }
 
 fn interior_sample_parameters(range: (f64, f64), division: usize) -> Vec<f64> {
     let (start, end) = range;
     let step = (end - start) / division as f64;
-    (1..division).map(|index| start + step * index as f64).collect()
+    (1..division)
+        .map(|index| start + step * index as f64)
+        .collect()
 }
 
 fn parameter_in_range(parameter: f64, range: (f64, f64), tolerance: f64) -> bool {
@@ -165,5 +197,4 @@ mod tests {
         let vertices = builder::vertices([start, end]);
         builder::line(&vertices[0], &vertices[1])
     }
-
 }

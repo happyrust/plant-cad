@@ -53,13 +53,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_options_validate() {
-        BopOptions::default().validate().unwrap();
-    }
+    fn default_options_validate() { BopOptions::default().validate().unwrap(); }
 
     #[test]
     fn rejects_non_positive_tolerance() {
-        let opts = BopOptions { geometric_tol: 0.0, ..BopOptions::default() };
+        let opts = BopOptions {
+            geometric_tol: 0.0,
+            ..BopOptions::default()
+        };
         assert!(opts.validate().is_err());
     }
 }

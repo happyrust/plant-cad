@@ -1,7 +1,7 @@
 //! Broad-phase candidate generation based on bounding-box overlap.
 
-use crate::{BopDs, BopOptions, BoundingProvider, EdgeId, FaceBoundingSurface, FaceId, VertexId};
 use crate::bopds::shape_info::ShapeKind;
+use crate::{BopDs, BopOptions, BoundingProvider, EdgeId, FaceBoundingSurface, FaceId, VertexId};
 use truck_base::cgmath64::Point3;
 use truck_geotrait::{BoundedCurve, Invertible};
 use truck_topology::{Edge, Face, Vertex};
@@ -64,7 +64,11 @@ where
     let options = bopds.options();
     let vertex_bboxes = vertices
         .iter()
-        .filter(|(id, _)| bopds.vertex_shape_info(*id).is_some_and(is_registered_vertex))
+        .filter(|(id, _)| {
+            bopds
+                .vertex_shape_info(*id)
+                .is_some_and(is_registered_vertex)
+        })
         .map(|(id, vertex)| (*id, vertex.bounding_box(options)))
         .collect::<Vec<_>>();
     let edge_bboxes = edges
@@ -167,11 +171,16 @@ mod tests {
 
     #[test]
     fn broad_phase_collects_all_overlapping_typed_pairs() {
-        let options = BopOptions { geometric_tol: 0.05, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.05,
+            ..BopOptions::default()
+        };
         let vertex_a = Vertex::new(Point3::new(0.0, 0.0, 0.0));
         let vertex_b = Vertex::new(Point3::new(0.03, 0.0, 0.0));
-        let edge_vertices = builder::vertices([Point3::new(-0.5, 0.0, 0.0), Point3::new(0.5, 0.0, 0.0)]);
-        let edge: Edge<Point3, truck_modeling::Curve> = builder::line(&edge_vertices[0], &edge_vertices[1]);
+        let edge_vertices =
+            builder::vertices([Point3::new(-0.5, 0.0, 0.0), Point3::new(0.5, 0.0, 0.0)]);
+        let edge: Edge<Point3, truck_modeling::Curve> =
+            builder::line(&edge_vertices[0], &edge_vertices[1]);
         let face = triangle_face(
             Point3::new(-0.5, -0.5, 0.0),
             Point3::new(0.5, -0.5, 0.0),
@@ -179,15 +188,24 @@ mod tests {
         );
 
         let candidates = generate_candidate_pairs(
-            &[(VertexId(0), vertex_a.clone()), (VertexId(1), vertex_b.clone())],
+            &[
+                (VertexId(0), vertex_a.clone()),
+                (VertexId(1), vertex_b.clone()),
+            ],
             &[(EdgeId(10), edge.clone())],
             &[(FaceId(20), face.clone())],
             &options,
         );
 
         assert_eq!(candidates.vv, vec![(VertexId(0), VertexId(1))]);
-        assert_eq!(candidates.ve, vec![(VertexId(0), EdgeId(10)), (VertexId(1), EdgeId(10))]);
-        assert_eq!(candidates.vf, vec![(VertexId(0), FaceId(20)), (VertexId(1), FaceId(20))]);
+        assert_eq!(
+            candidates.ve,
+            vec![(VertexId(0), EdgeId(10)), (VertexId(1), EdgeId(10))]
+        );
+        assert_eq!(
+            candidates.vf,
+            vec![(VertexId(0), FaceId(20)), (VertexId(1), FaceId(20))]
+        );
         assert_eq!(candidates.ee, Vec::<(EdgeId, EdgeId)>::new());
         assert_eq!(candidates.ef, vec![(EdgeId(10), FaceId(20))]);
         assert_eq!(candidates.ff, Vec::<(FaceId, FaceId)>::new());
@@ -195,10 +213,15 @@ mod tests {
 
     #[test]
     fn broad_phase_filters_non_overlapping_pairs() {
-        let options = BopOptions { geometric_tol: 0.01, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.01,
+            ..BopOptions::default()
+        };
         let vertex = Vertex::new(Point3::new(0.0, 0.0, 0.0));
-        let edge_vertices = builder::vertices([Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)]);
-        let edge: Edge<Point3, truck_modeling::Curve> = builder::line(&edge_vertices[0], &edge_vertices[1]);
+        let edge_vertices =
+            builder::vertices([Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)]);
+        let edge: Edge<Point3, truck_modeling::Curve> =
+            builder::line(&edge_vertices[0], &edge_vertices[1]);
         let face = triangle_face(
             Point3::new(4.0, 4.0, 0.0),
             Point3::new(5.0, 4.0, 0.0),
@@ -222,10 +245,15 @@ mod tests {
 
     #[test]
     fn broad_phase_excludes_self_pairs_even_when_bbox_overlaps_itself() {
-        let options = BopOptions { geometric_tol: 0.05, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.05,
+            ..BopOptions::default()
+        };
         let vertex = Vertex::new(Point3::new(0.0, 0.0, 0.0));
-        let edge_vertices = builder::vertices([Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)]);
-        let edge: Edge<Point3, truck_modeling::Curve> = builder::line(&edge_vertices[0], &edge_vertices[1]);
+        let edge_vertices =
+            builder::vertices([Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)]);
+        let edge: Edge<Point3, truck_modeling::Curve> =
+            builder::line(&edge_vertices[0], &edge_vertices[1]);
         let face = triangle_face(
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),
@@ -249,7 +277,10 @@ mod tests {
 
     #[test]
     fn broad_phase_bopds_reads_registered_shapes_and_preserves_overlap_filtering() {
-        let options = BopOptions { geometric_tol: 0.05, ..BopOptions::default() };
+        let options = BopOptions {
+            geometric_tol: 0.05,
+            ..BopOptions::default()
+        };
         let mut bopds = BopDs::with_options(options);
         let vertex_a_id = bopds.register_vertex_source(0);
         let vertex_b_id = bopds.register_vertex_source(1);
@@ -258,8 +289,10 @@ mod tests {
 
         let vertex_a = Vertex::new(Point3::new(0.0, 0.0, 0.0));
         let vertex_b = Vertex::new(Point3::new(0.03, 0.0, 0.0));
-        let edge_vertices = builder::vertices([Point3::new(-0.5, 0.0, 0.0), Point3::new(0.5, 0.0, 0.0)]);
-        let edge: Edge<Point3, truck_modeling::Curve> = builder::line(&edge_vertices[0], &edge_vertices[1]);
+        let edge_vertices =
+            builder::vertices([Point3::new(-0.5, 0.0, 0.0), Point3::new(0.5, 0.0, 0.0)]);
+        let edge: Edge<Point3, truck_modeling::Curve> =
+            builder::line(&edge_vertices[0], &edge_vertices[1]);
         let face = triangle_face(
             Point3::new(-0.5, -0.5, 0.0),
             Point3::new(0.5, -0.5, 0.0),
@@ -295,18 +328,20 @@ mod tests {
         );
 
         assert_eq!(candidates.vv, vec![(vertex_a_id, vertex_b_id)]);
-        assert_eq!(candidates.ve, vec![(vertex_a_id, edge_id), (vertex_b_id, edge_id)]);
-        assert_eq!(candidates.vf, vec![(vertex_a_id, face_id), (vertex_b_id, face_id)]);
+        assert_eq!(
+            candidates.ve,
+            vec![(vertex_a_id, edge_id), (vertex_b_id, edge_id)]
+        );
+        assert_eq!(
+            candidates.vf,
+            vec![(vertex_a_id, face_id), (vertex_b_id, face_id)]
+        );
         assert!(candidates.ee.is_empty());
         assert_eq!(candidates.ef, vec![(edge_id, face_id)]);
         assert!(candidates.ff.is_empty());
     }
 
-    fn triangle_face(
-        a: Point3,
-        b: Point3,
-        c: Point3,
-    ) -> Face<Point3, truck_modeling::Curve, ()> {
+    fn triangle_face(a: Point3, b: Point3, c: Point3) -> Face<Point3, truck_modeling::Curve, ()> {
         let vertices = builder::vertices([a, b, c]);
         let edge0: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[0], &vertices[1]);
         let edge1: Edge<Point3, truck_modeling::Curve> = builder::line(&vertices[1], &vertices[2]);
