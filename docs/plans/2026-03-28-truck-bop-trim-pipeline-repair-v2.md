@@ -12,9 +12,9 @@
 
 ## Progress Snapshot
 
-### 当前状态（2026-03-28）
+### 当前状态（2026-03-29）
 
-- **状态**：`verification-green`
+- **状态**：`delivered`
 - **已完成任务**：
   - Task 1：修正 loop reversal 的元数据一致性
   - Task 2：给 `TrimmingEdge` 保留真实 source boundary provenance
@@ -24,7 +24,12 @@
   - Task 6：补全局 outwardness 校验
   - Task 7：跑完整回归矩阵并完成 crate 级验证
 - **未完成任务**：
-  - 2026-03-28 审查修复已在本地完成，但尚未额外 commit / push
+  - 无（代码、测试、文档与远端交付均已完成）
+- **最新交付快照**：
+  - 关键修复提交：`c84e2822 fix(trim): restore shell assembly invariants`
+  - 回归补强提交：`a33727a8 test(trim): add shell pipeline regression coverage`
+  - 远端状态：`plant-cad/master -> a33727a8`
+  - 分支状态：`plant-cad/codex/truck-bop-trim-pipeline-repair -> a33727a8`
 
 ### 已落地实现
 
@@ -86,12 +91,13 @@
   - `shell_orientation_rejects_closed_shell_with_inverted_faces`
 - 当前已完成的更大范围验证：
   - Task 7 关键回归矩阵全部通过
-  - `cargo test -p truck-bop` 全量通过（`138 passed, 4 ignored`）
+  - `cargo test -p truck-bop` 全量通过（当前 `142 passed, 4 ignored`；包含后续补充的 4 条回归测试）
   - `cargo check -p truck-bop` 通过（仅剩 future-incompat dependency 提示）
   - `cargo check --release -p truck-bop` 通过（仅剩 future-incompat dependency 提示）
-- 当前仍未处理的只剩工程性收尾：
-  - 2026-03-28 审查修复尚未额外 commit / push
+- 当前已完成的工程性收尾：
+  - 2026-03-28 审查修复已完成额外 commit / push
   - `docs/plans/2026-03-24-truck-bop-shell-assembly-repair.md` 已补 `superseded by v2` 标记
+  - 新增回归测试已提交并推送到 `plant-cad/master`
 - 当前已消除的审查问题：
   - release 构建不再因为 dead helper / placeholder 结构体而失败
   - source boundary provenance 不再依赖截断哈希
@@ -528,7 +534,7 @@ Run:
 
 如有残余 dead helper、临时调试输出、重复转换逻辑，在这个任务里一次性清理，但不要额外扩 scope。
 
-> 2026-03-28 结果：`cargo test -p truck-bop` 已全绿（`138 passed, 4 ignored`）；后续审查修复后，`cargo check -p truck-bop` 与 `cargo check --release -p truck-bop` 也已通过，当前仅剩 dependency future-incompat 提示。
+> 2026-03-29 结果：`cargo test -p truck-bop` 已全绿（当前 `142 passed, 4 ignored`，包含后续补充的 4 条回归测试）；`cargo check -p truck-bop` 与 `cargo check --release -p truck-bop` 均已通过，当前仅剩 dependency future-incompat 提示。
 
 - [x] **Step 4: 如果旧计划已过期，标注 superseded**
 
@@ -536,12 +542,15 @@ Run:
 
 > 2026-03-28 结果：已完成。旧计划顶部现已明确标注 superseded，并指向 v2 文档。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add truck-bop/src/trim.rs docs/plans/2026-03-24-truck-bop-shell-assembly-repair.md docs/plans/2026-03-28-truck-bop-trim-pipeline-repair-v2.md
-git commit -m "test: add regression matrix for trim rebuild pipeline"
+git commit -m "fix(trim): restore shell assembly invariants"
+git commit -m "test(trim): add shell pipeline regression coverage"
 ```
+
+> 2026-03-29 结果：已完成。关键修复提交为 `c84e2822`，回归补强提交为 `a33727a8`，两者均已推送到 `plant-cad/master`。
 
 ## Acceptance Checklist
 
@@ -552,10 +561,12 @@ git commit -m "test: add regression matrix for trim rebuild pipeline"
 - [x] 同一 component 内 rebuild 后的共享 topology 不被重复复制。
 - [x] `assemble_shells()` 对所有 `shell_condition() != Closed` 的输出稳定报错。
 - [x] `assemble_shells()` 对 globally inverted closed shell 稳定报错。
-- [ ] 以下 5 个当前红灯全部转绿：
+- [x] 以下 5 个当前红灯全部转绿：
   - [x] `trim::tests::shell_assembly_groups_faces_by_shared_topology_components`
   - [x] `trim::tests::face_orientation_flips_adjacent_face_to_close_shell`
   - [x] `trim::tests::shell_closure_rejects_boundary_edge_component`
   - [x] `trim::tests::shell_assembly_separates_disconnected_closed_components`
   - [x] `trim::tests::shell_orientation_rejects_closed_shell_with_inverted_faces`
 - [x] `cargo test -p truck-bop` 全量通过。
+- [x] `cargo check --release -p truck-bop` 通过。
+- [x] 最终交付已推送到 `plant-cad/master`。
