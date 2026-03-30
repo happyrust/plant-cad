@@ -2574,6 +2574,32 @@ mod tests {
     }
 
     #[test]
+    fn fragment_classification_marks_boundary_representative_points_as_on_boundary() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let face_id = bopds.register_face_source(0);
+        bopds.push_split_face(SplitFace {
+            original_face: face_id,
+            operand_rank: 0,
+            trimming_loops: vec![outer_loop(face_id, square_loop(0.25, 0.75))],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: None,
+        });
+
+        let opposite = operand_box(1, Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
+        let classified =
+            classify_split_faces_against_operand(&mut bopds, &[(1, opposite)]).unwrap();
+
+        assert_eq!(classified, 1);
+        let fragment = &bopds.split_faces()[0];
+        assert_eq!(
+            fragment.representative_point,
+            Some(Point3::new(0.5, 0.5, 0.0))
+        );
+        assert_eq!(fragment.classification, Some(PointClassification::OnBoundary));
+    }
+
+    #[test]
     fn fragment_classification_skips_unpaired_operand_fragments() {
         let mut bopds = BopDs::with_options(BopOptions::default());
         let face_id = bopds.register_face_source(2);
@@ -2888,6 +2914,123 @@ mod tests {
         assert_eq!(map.get(&b), Some(&canonical));
         assert_eq!(map.get(&c), Some(&canonical));
         assert_eq!(bopds.merged_vertices().len(), 2);
+    }
+
+
+    #[test]
+    fn vertex_merging_and_edge_sewing_replace_derived_state_when_re_run() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            ..BopOptions::default()
+        });
+        let face_a = bopds.register_face_source(0);
+        let face_b = bopds.register_face_source(1);
+        let first = vec![
+            SplitFace {
+                original_face: face_a,
+                operand_rank: 0,
+                trimming_loops: vec![TrimmingLoop {
+                    face: face_a,
+                    vertex_ids: vec![VertexId(10), VertexId(11)],
+                    edges: vec![line_edge(
+                        None,
+                        Point2::new(0.0, 0.0),
+                        Point2::new(1.0, 0.0),
+                    )],
+                    uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
+                    signed_area: 0.0,
+                    is_outer: true,
+                }],
+                splitting_edges: vec![],
+                representative_point: None,
+                classification: Some(PointClassification::Inside),
+            },
+            SplitFace {
+                original_face: face_b,
+                operand_rank: 1,
+                trimming_loops: vec![TrimmingLoop {
+                    face: face_b,
+                    vertex_ids: vec![VertexId(20), VertexId(21)],
+                    edges: vec![line_edge(
+                        None,
+                        Point2::new(1.0, 0.0),
+                        Point2::new(0.0, 0.0),
+                    )],
+                    uv_points: vec![Point2::new(1.0, 0.0), Point2::new(0.0, 0.0)],
+                    signed_area: 0.0,
+                    is_outer: true,
+                }],
+                splitting_edges: vec![],
+                representative_point: None,
+                classification: Some(PointClassification::Inside),
+            },
+        ];
+
+        let first_map = merge_equivalent_vertices(&mut bopds, &first);
+        let first_paths = sew_fragment_edges(&mut bopds, &first, &first_map);
+        assert_eq!(bopds.merged_vertices().len(), 2);
+        assert_eq!(first_map.len(), 4);
+        assert_eq!(bopds.sewn_paths().len(), 1);
+        assert_eq!(first_paths.len(), 1);
+        assert!(bopds.merged_vertices().iter().any(|merged| {
+            merged.original_vertices == vec![VertexId(10), VertexId(21)]
+        }));
+        assert!(bopds.merged_vertices().iter().any(|merged| {
+            merged.original_vertices == vec![VertexId(11), VertexId(20)]
+        }));
+        assert_eq!(bopds.sewn_paths()[0].edges.len(), 2);
+
+        let second = vec![SplitFace {
+            original_face: face_a,
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: face_a,
+                vertex_ids: vec![VertexId(30), VertexId(31), VertexId(32)],
+                edges: vec![
+                    line_edge(
+                        Some(SectionCurveId(7)),
+                        Point2::new(0.0, 0.0),
+                        Point2::new(1.0, 0.0),
+                    ),
+                    line_edge(
+                        Some(SectionCurveId(8)),
+                        Point2::new(2.0, 0.0),
+                        Point2::new(1.0, 0.0),
+                    ),
+                ],
+                uv_points: vec![
+                    Point2::new(0.0, 0.0),
+                    Point2::new(1.0, 0.0),
+                    Point2::new(2.0, 0.0),
+                ],
+                signed_area: 0.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![SectionCurveId(7), SectionCurveId(8)],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        }];
+
+        let second_map = merge_equivalent_vertices(&mut bopds, &second);
+        let second_paths = sew_fragment_edges(&mut bopds, &second, &second_map);
+        assert_eq!(bopds.merged_vertices().len(), 3);
+        assert_eq!(second_map.len(), 3);
+        assert!(second_map.keys().all(|id| !first_map.contains_key(id)));
+        assert_eq!(bopds.sewn_paths().len(), 1);
+        assert_eq!(second_paths.len(), 1);
+        assert_eq!(bopds.sewn_paths(), second_paths.as_slice());
+        assert_eq!(bopds.sewn_paths()[0].edges.len(), 2);
+        assert!(!bopds.sewn_paths()[0].is_closed);
+        assert!(bopds.merged_vertices().iter().all(|merged| {
+            merged
+                .original_vertices
+                .iter()
+                .all(|vertex| matches!(*vertex, VertexId(30) | VertexId(31) | VertexId(32)))
+        }));
+        assert!(bopds.sewn_paths()[0].edges.iter().all(|edge| {
+            matches!(edge.start_vertex, VertexId(30) | VertexId(31) | VertexId(32))
+                && matches!(edge.end_vertex, VertexId(30) | VertexId(31) | VertexId(32))
+        }));
     }
 
     #[test]
