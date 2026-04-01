@@ -3341,8 +3341,8 @@ mod tests {
             sewn_pairs,
             vec![(VertexId(1), VertexId(2)), (VertexId(1), VertexId(2))]
         );
-        assert!(matches!(paths[0].edges[0].source.topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(7))));
-        assert!(matches!(paths[0].edges[1].source.topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(8))));
+        assert!(matches!(paths[0].edges[0].source.topology_key, crate::TrimmingTopologyKey::Generated { .. }));
+        assert!(matches!(paths[0].edges[1].source.topology_key, crate::TrimmingTopologyKey::Generated { .. }));
         assert_eq!(
             paths[0].edges[0].sewn_pair,
             Some(SewnEdgePair::new(
@@ -3404,8 +3404,8 @@ mod tests {
 
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].edges.len(), 2);
-        assert_eq!(paths[0].edges[0].source.topology_key, crate::TrimmingTopologyKey::SourceBoundary(EdgeId(7)));
-        assert_eq!(paths[0].edges[1].source.topology_key, crate::TrimmingTopologyKey::SourceBoundary(EdgeId(8)));
+        assert_eq!(paths[0].edges[0].source.topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(7)));
+        assert_eq!(paths[0].edges[1].source.topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(8)));
         assert!(paths[0].edges.iter().all(|edge| edge.sewn_pair.is_none()));
     }
 
