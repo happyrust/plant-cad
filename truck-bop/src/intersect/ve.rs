@@ -53,7 +53,12 @@ where
 
         let pave = Pave::new(edge_id, vertex_id, parameter, tolerance)
             .expect("geometric tolerance is validated when BopOptions is created");
-        bopds.push_pave(pave);
+        let appended = bopds.append_ext_pave(edge_id, pave);
+        if !appended {
+            bopds.push_pave(pave);
+        } else {
+            bopds.split_pave_blocks_for_edge(edge_id);
+        }
         bopds.push_ve_interference(VEInterference {
             vertex: vertex_id,
             edge: edge_id,
@@ -201,6 +206,103 @@ mod tests {
 
         assert_eq!(count, 1);
         assert!(parameter >= start && parameter <= end);
+    }
+
+    #[test]
+    fn ve_intersection_appends_extra_pave_into_matching_block() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        bopds.rebuild_paves_for_edges(&[(EdgeId(10), edge.clone())]);
+
+        let count = intersect_ve(
+            &mut bopds,
+            &[(VertexId(40), Vertex::new(Point3::new(0.25, 0.0, 0.0)))],
+            &[(EdgeId(10), edge)],
+            &[(VertexId(40), EdgeId(10))],
+        );
+
+        assert_eq!(count, 1);
+        let blocks = bopds.pave_blocks_for_edge(EdgeId(10));
+        let ranges: Vec<(f64, f64)> = blocks.iter().map(|block| block.param_range).collect();
+        assert_eq!(ranges, vec![(0.0, 0.25), (0.25, 1.0)]);
+        assert!(blocks.iter().all(|block| block.ext_paves.is_empty()));
+    }
+
+    #[test]
+    fn ve_intersection_splits_edge_after_extra_pave_is_added() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        bopds.rebuild_paves_for_edges(&[(EdgeId(11), edge.clone())]);
+
+        let count = intersect_ve(
+            &mut bopds,
+            &[(VertexId(41), Vertex::new(Point3::new(0.25, 0.0, 0.0)))],
+            &[(EdgeId(11), edge)],
+            &[(VertexId(41), EdgeId(11))],
+        );
+
+        assert_eq!(count, 1);
+        let blocks = bopds.pave_blocks_for_edge(EdgeId(11));
+        let ranges: Vec<(f64, f64)> = blocks.iter().map(|block| block.param_range).collect();
+        assert_eq!(ranges, vec![(0.0, 0.25), (0.25, 1.0)]);
+    }
+
+    #[test]
+    fn ve_intersection_does_not_duplicate_existing_endpoint_pave() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        bopds.rebuild_paves_for_edges(&[(EdgeId(12), edge.clone())]);
+        let endpoint_vertex = bopds.paves_for_edge(EdgeId(12))[0].vertex;
+
+        let count = intersect_ve(
+            &mut bopds,
+            &[(endpoint_vertex, Vertex::new(Point3::new(0.0, 0.0, 0.0)))],
+            &[(EdgeId(12), edge)],
+            &[(endpoint_vertex, EdgeId(12))],
+        );
+
+        assert_eq!(count, 1);
+        let blocks = bopds.pave_blocks_for_edge(EdgeId(12));
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].ext_paves.is_empty());
+        assert_eq!(bopds.paves_for_edge(EdgeId(12)).len(), 2);
+    }
+
+    #[test]
+    fn ve_intersection_respects_parametric_tolerance_when_matching_block() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-3,
+            parametric_tol: 1.0e-4,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        bopds.push_pave(Pave::new(EdgeId(13), VertexId(130), 0.5, 1.0e-4).unwrap());
+        bopds.rebuild_paves_for_edges(&[(EdgeId(13), edge.clone())]);
+
+        let count = intersect_ve(
+            &mut bopds,
+            &[(VertexId(131), Vertex::new(Point3::new(0.50005, 0.0, 0.0)))],
+            &[(EdgeId(13), edge)],
+            &[(VertexId(131), EdgeId(13))],
+        );
+
+        assert_eq!(count, 1);
+        let blocks = bopds.pave_blocks_for_edge(EdgeId(13));
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|block| block.ext_paves.is_empty()));
+        assert_eq!(bopds.paves_for_edge(EdgeId(13)).len(), 3);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {
