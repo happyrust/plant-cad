@@ -184,9 +184,53 @@ impl BopDs {
         common_block_id
     }
 
+    /// Updates an existing common block in place and refreshes its pave-block lookup links.
+    pub fn update_common_block(
+        &mut self,
+        common_block_id: CommonBlockId,
+        common_block: CommonBlock,
+    ) -> bool {
+        let Some(slot) = self.common_blocks.get_mut(common_block_id.0 as usize) else {
+            return false;
+        };
+        for pave_block_id in slot.pave_blocks.iter().copied() {
+            self.pave_block_to_common_block.remove(&pave_block_id);
+        }
+        for pave_block_id in common_block.pave_blocks.iter().copied() {
+            self.pave_block_to_common_block
+                .insert(pave_block_id, common_block_id);
+        }
+        *slot = common_block;
+        true
+    }
+
     /// Returns the common-block identifier associated with a pave block.
     pub fn common_block_for_pave_block(&self, pave_block_id: PaveBlockId) -> Option<CommonBlockId> {
         self.pave_block_to_common_block.get(&pave_block_id).copied()
+    }
+
+    /// Returns the pave-block identifier for a block matching the given edge and parameter span.
+    pub fn find_pave_block_by_range(
+        &self,
+        edge_id: EdgeId,
+        start: f64,
+        end: f64,
+        tolerance: f64,
+    ) -> Option<PaveBlockId> {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        self.pave_blocks
+            .iter()
+            .enumerate()
+            .find(|(_, block)| {
+                block.original_edge == edge_id
+                    && (block.param_range.0 - start).abs() <= tolerance
+                    && (block.param_range.1 - end).abs() <= tolerance
+            })
+            .map(|(index, _)| PaveBlockId(index as u32))
     }
 
     /// Stores a symmetric interference-pair index.

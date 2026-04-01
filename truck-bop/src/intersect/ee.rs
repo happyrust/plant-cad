@@ -99,57 +99,22 @@ where
             continue;
         };
 
-        if let Some(overlap) = line_overlap_range(edge_a, edge_b, tolerance) {
-            let common_block_id = bopds.push_common_block(CommonBlock::new(
-                vec![crate::PaveBlockId(0), crate::PaveBlockId(0)],
-                vec![],
-                Some(edge_a_id),
-            ));
-            bopds.push_ee_interference(EEInterference {
-                edge1: edge_a_id,
-                edge2: edge_b_id,
-                t_a: overlap.t_a.0,
-                t_b: overlap.t_b.0,
-                kind: EEInterferenceKind::OverlapHit,
-            });
-            bopds.push_ee_interference(EEInterference {
-                edge1: edge_a_id,
-                edge2: edge_b_id,
-                t_a: overlap.t_a.1,
-                t_b: overlap.t_b.1,
-                kind: EEInterferenceKind::OverlapHit,
-            });
-            let _ = common_block_id;
-            count += 1;
-            continue;
-        }
-
-        let overlaps = detect_overlap_ranges(edge_a, edge_b, tolerance);
+        let overlaps = match line_overlap_range(edge_a, edge_b, tolerance) {
+            Some(overlap) => vec![overlap],
+            None => detect_overlap_ranges(edge_a, edge_b, tolerance),
+        };
         if !overlaps.is_empty() {
             for overlap in overlaps {
-                let _ = overlap;
-                let _ = parametric_tol;
-                bopds.push_common_block(CommonBlock::new(
-                    vec![crate::PaveBlockId(0), crate::PaveBlockId(0)],
-                    vec![],
-                    Some(edge_a_id),
-                ));
-
-                bopds.push_ee_interference(EEInterference {
-                    edge1: edge_a_id,
-                    edge2: edge_b_id,
-                    t_a: overlap.t_a.0,
-                    t_b: overlap.t_b.0,
-                    kind: EEInterferenceKind::OverlapHit,
-                });
-                bopds.push_ee_interference(EEInterference {
-                    edge1: edge_a_id,
-                    edge2: edge_b_id,
-                    t_a: overlap.t_a.1,
-                    t_b: overlap.t_b.1,
-                    kind: EEInterferenceKind::OverlapHit,
-                });
-                count += 1;
+                if register_overlap_fact(
+                    bopds,
+                    edge_a_id,
+                    edge_b_id,
+                    overlap,
+                    (edge_parameter_range(edge_a), edge_parameter_range(edge_b)),
+                    parametric_tol,
+                ) {
+                    count += 1;
+                }
             }
             continue;
         }
@@ -250,6 +215,115 @@ fn append_or_push_split_pave(
         bopds.push_pave(pave);
         bopds.rebuild_pave_blocks_from_paves(edge_id);
     }
+}
+
+fn register_overlap_fact(
+    bopds: &mut BopDs,
+    edge_a_id: EdgeId,
+    edge_b_id: EdgeId,
+    overlap: OverlapRange,
+    edge_ranges: ((f64, f64), (f64, f64)),
+    parametric_tol: f64,
+) -> bool {
+    let pave_a_start = overlap_pave(bopds, edge_a_id, overlap.t_a.0, edge_ranges.0, parametric_tol);
+    let pave_a_end = overlap_pave(bopds, edge_a_id, overlap.t_a.1, edge_ranges.0, parametric_tol);
+    let pave_b_start = overlap_pave(bopds, edge_b_id, overlap.t_b.0, edge_ranges.1, parametric_tol);
+    let pave_b_end = overlap_pave(bopds, edge_b_id, overlap.t_b.1, edge_ranges.1, parametric_tol);
+
+    for pave in [pave_a_start, pave_a_end] {
+        append_or_push_split_pave(bopds, edge_a_id, pave, edge_ranges.0);
+    }
+    for pave in [pave_b_start, pave_b_end] {
+        append_or_push_split_pave(bopds, edge_b_id, pave, edge_ranges.1);
+    }
+
+    bopds.split_pave_blocks_for_edge(edge_a_id);
+    bopds.split_pave_blocks_for_edge(edge_b_id);
+
+    let Some(block_a) = bopds.find_pave_block_by_range(
+        edge_a_id,
+        overlap.t_a.0,
+        overlap.t_a.1,
+        parametric_tol,
+    ) else {
+        return false;
+    };
+    let Some(block_b) = bopds.find_pave_block_by_range(
+        edge_b_id,
+        overlap.t_b.0,
+        overlap.t_b.1,
+        parametric_tol,
+    ) else {
+        return false;
+    };
+
+    let block_ids = [block_a, block_b];
+    let maybe_existing = block_ids
+        .into_iter()
+        .find_map(|block_id| bopds.common_block_for_pave_block(block_id));
+    if let Some(common_block_id) = maybe_existing {
+        if let Some(existing) = bopds.common_block(common_block_id).cloned() {
+            let mut updated = existing;
+            updated.push_pave_block(block_a);
+            updated.push_pave_block(block_b);
+            let _ = bopds.update_common_block(common_block_id, updated);
+        }
+    } else {
+        bopds.push_common_block(CommonBlock::new(
+            vec![block_a, block_b],
+            vec![],
+            Some(edge_a_id),
+        ));
+    }
+
+    bopds.push_ee_interference(EEInterference {
+        edge1: edge_a_id,
+        edge2: edge_b_id,
+        t_a: overlap.t_a.0,
+        t_b: overlap.t_b.0,
+        kind: EEInterferenceKind::OverlapHit,
+    });
+    bopds.push_ee_interference(EEInterference {
+        edge1: edge_a_id,
+        edge2: edge_b_id,
+        t_a: overlap.t_a.1,
+        t_b: overlap.t_b.1,
+        kind: EEInterferenceKind::OverlapHit,
+    });
+    true
+}
+
+fn overlap_pave(
+    bopds: &mut BopDs,
+    edge_id: EdgeId,
+    parameter: f64,
+    edge_range: (f64, f64),
+    parametric_tol: f64,
+) -> Pave {
+    let vertex = existing_vertex_for_parameter(bopds, edge_id, parameter, parametric_tol)
+        .unwrap_or_else(|| bopds.next_generated_vertex_id());
+    let clamped = if (parameter - edge_range.0).abs() <= parametric_tol {
+        edge_range.0
+    } else if (parameter - edge_range.1).abs() <= parametric_tol {
+        edge_range.1
+    } else {
+        parameter
+    };
+    Pave::new(edge_id, vertex, clamped, parametric_tol)
+        .expect("parametric tolerance is validated when BopOptions is created")
+}
+
+fn existing_vertex_for_parameter(
+    bopds: &BopDs,
+    edge_id: EdgeId,
+    parameter: f64,
+    tolerance: f64,
+) -> Option<crate::VertexId> {
+    bopds
+        .paves_for_edge(edge_id)
+        .into_iter()
+        .find(|pave| (pave.parameter - parameter).abs() <= tolerance.max(pave.tolerance))
+        .map(|pave| pave.vertex)
 }
 
 fn edge_parameter_range<C>(edge: &Edge<Point3, C>) -> (f64, f64)
@@ -617,6 +691,27 @@ mod tests {
             .iter()
             .all(|item| item.kind == EEInterferenceKind::OverlapHit));
         assert_eq!(bopds.common_blocks().len(), 1);
+        let common_block = &bopds.common_blocks()[0];
+        assert_eq!(common_block.pave_blocks.len(), 2);
+        assert_ne!(common_block.pave_blocks[0], common_block.pave_blocks[1]);
+        assert!(common_block
+            .pave_blocks
+            .iter()
+            .all(|id| id.0 != 0));
+        assert_eq!(
+            bopds.pave_blocks_for_edge(EdgeId(20))
+                .iter()
+                .map(|block| block.param_range)
+                .collect::<Vec<_>>(),
+            vec![(0.0, 0.25), (0.25, 0.75), (0.75, 1.0)]
+        );
+        assert_eq!(
+            bopds.pave_blocks_for_edge(EdgeId(21))
+                .iter()
+                .map(|block| block.param_range)
+                .collect::<Vec<_>>(),
+            vec![(0.0, 1.0)]
+        );
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, Curve> {

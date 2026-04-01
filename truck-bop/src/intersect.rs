@@ -7,7 +7,7 @@ mod ve;
 mod vf;
 mod vv;
 
-pub use ee::intersect_ee;
+pub use ee::{intersect_ee, intersect_ee_into_bopds};
 pub use ef::intersect_ef;
 pub use ff::intersect_ff;
 pub use ve::intersect_ve;

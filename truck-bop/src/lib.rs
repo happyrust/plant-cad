@@ -24,8 +24,8 @@ mod trim;
 
 pub use bopds::{
     BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId, SectionCurveId,
-    SewnEdge, SewnPath, ShapeId, SplitFace, TrimmingEdge, TrimmingEdgeProvenance,
-    TrimmingLoop, TrimmingTopologyKey, VertexId,
+    SewnEdge, SewnPath, ShapeId, SplitFace, TrimmingEdge, TrimmingEdgeProvenance, TrimmingLoop,
+    TrimmingTopologyKey, VertexId,
 };
 pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use broad_phase::{
@@ -33,7 +33,8 @@ pub use broad_phase::{
 };
 pub use error::BopError;
 pub use intersect::{
-    intersect_ee, intersect_ef, intersect_ff, intersect_ve, intersect_vf, intersect_vv,
+    intersect_ee, intersect_ee_into_bopds, intersect_ef, intersect_ff, intersect_ve, intersect_vf,
+    intersect_vv,
 };
 pub use options::BopOptions;
 pub use pipeline::{classify_point_in_solid, BooleanOp, PointClassification};
