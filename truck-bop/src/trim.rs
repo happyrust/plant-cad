@@ -500,7 +500,7 @@ fn canonical_loop_edges(trimming_loop: &TrimmingLoop) -> Vec<CanonicalRebuiltEdg
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum CanonicalRebuiltEdge {
-    Source(EdgeId),
+    Source(crate::TrimmingTopologyKey),
     SharedBoundary(VertexId, VertexId),
     OpenBoundary(FaceId, VertexId, VertexId),
 }
@@ -517,11 +517,13 @@ fn canonical_rebuilt_edge(
     start: VertexId,
     end: VertexId,
 ) -> CanonicalRebuiltEdge {
-    if let Some(section_curve_id) = edge.provenance.section_curve() {
-        return CanonicalRebuiltEdge::Source(edge_id_from_section_curve(section_curve_id));
-    }
-    if let Some(original_edge) = edge.provenance.source_boundary() {
-        return CanonicalRebuiltEdge::Source(original_edge);
+    let topology_key = edge.provenance.topology_key(face, 0, 0);
+    if matches!(
+        topology_key,
+        crate::TrimmingTopologyKey::SourceBoundary(_)
+            | crate::TrimmingTopologyKey::SectionCurve(_)
+    ) {
+        return CanonicalRebuiltEdge::Source(topology_key);
     }
 
     let undirected = undirected_edge_key(start, end);
@@ -1065,10 +1067,6 @@ fn collect_sewn_edges(
     edges
 }
 
-fn edge_id_from_section_curve(section_curve_id: SectionCurveId) -> EdgeId {
-    EdgeId(section_curve_id.0)
-}
-
 fn edge_id_from_source_boundary<C>(edge: &truck_topology::Edge<Point3, C>) -> EdgeId {
     let key = source_boundary_edge_key(edge);
     let mut registry = source_boundary_edge_registry()
@@ -1110,7 +1108,7 @@ fn compare_point3(lhs: Point3, rhs: Point3) -> std::cmp::Ordering {
 fn cyclic_edge_sequence_matches(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
     expected.len() == actual.len()
         && (cyclically_aligned(expected, actual)
-            || cyclically_aligned(expected, &actual.iter().rev().copied().collect::<Vec<_>>()))
+            || cyclically_aligned_reversed(expected, actual))
 }
 
 fn cyclically_aligned(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
@@ -1123,6 +1121,19 @@ fn cyclically_aligned(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
             .iter()
             .enumerate()
             .all(|(index, edge_id)| *edge_id == actual[(index + offset) % actual.len()])
+    })
+}
+
+fn cyclically_aligned_reversed(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
+    if expected.is_empty() {
+        return true;
+    }
+
+    (0..actual.len()).any(|offset| {
+        expected.iter().enumerate().all(|(index, edge_id)| {
+            let reverse_index = (actual.len() + offset - (index % actual.len())) % actual.len();
+            *edge_id == actual[reverse_index]
+        })
     })
 }
 
@@ -1888,6 +1899,39 @@ mod tests {
         assert!(left_sources
             .iter()
             .any(|edge_id| right_sources.contains(edge_id)));
+    }
+
+    #[test]
+    fn boundary_loops_preserve_topology_keys_for_shared_source_edges() {
+        let (left_face, right_face) = adjacent_shell_faces_with_shared_edge();
+
+        let left_loops = boundary_loops(FaceId(0), &left_face, 1.0e-9);
+        let right_loops = boundary_loops(FaceId(1), &right_face, 1.0e-9);
+
+        let left_sources: Vec<_> = canonical_loop_edges(&left_loops[0])
+            .into_iter()
+            .filter_map(|edge| match edge {
+                CanonicalRebuiltEdge::Source(topology_key) => Some(topology_key),
+                _ => None,
+            })
+            .collect();
+        let right_sources: Vec<_> = canonical_loop_edges(&right_loops[0])
+            .into_iter()
+            .filter_map(|edge| match edge {
+                CanonicalRebuiltEdge::Source(topology_key) => Some(topology_key),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            left_sources
+                .iter()
+                .any(|topology_key| right_sources.contains(topology_key))
+        );
+        assert!(left_sources.iter().all(|topology_key| matches!(
+            topology_key,
+            crate::TrimmingTopologyKey::SourceBoundary(_)
+        )));
     }
 
     #[test]
@@ -3939,11 +3983,15 @@ mod tests {
 
         assert_eq!(
             left_topology.shared_edges,
-            vec![CanonicalRebuiltEdge::Source(EdgeId(shared.0))]
+            vec![CanonicalRebuiltEdge::Source(
+                crate::TrimmingTopologyKey::SectionCurve(shared)
+            )]
         );
         assert_eq!(
             right_topology.shared_edges,
-            vec![CanonicalRebuiltEdge::Source(EdgeId(shared.0))]
+            vec![CanonicalRebuiltEdge::Source(
+                crate::TrimmingTopologyKey::SectionCurve(shared)
+            )]
         );
         assert!(open_topology.shared_edges.is_empty());
         assert!(left_topology
