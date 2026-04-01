@@ -2,7 +2,7 @@
 
 use crate::{
     bopds::{CommonBlock, EFInterference, Pave},
-    BopDs, EdgeId, FaceId,
+    BopDs, EdgeId, FaceId, VertexId,
 };
 use truck_base::cgmath64::{EuclideanSpace, InnerSpace, MetricSpace, Point2, Point3};
 use truck_geotrait::{
@@ -311,7 +311,7 @@ fn push_unique_intersection(
         return false;
     }
 
-    let Some(pave_block_id) = register_edge_face_fact(
+    let Some((pave_block_id, vertex_id)) = register_edge_face_fact(
         bopds,
         edge_id,
         face_id,
@@ -327,7 +327,14 @@ fn push_unique_intersection(
         parameter,
         surface_parameters,
     });
-    bind_face_info_from_edge_face_fact(bopds, face_id, parameter, pave_block_id);
+    bind_face_info_from_edge_face_fact(
+        bopds,
+        face_id,
+        parameter,
+        surface_parameters,
+        pave_block_id,
+        vertex_id,
+    );
     true
 }
 
@@ -338,7 +345,7 @@ fn register_edge_face_fact(
     parameter: f64,
     surface_parameters: (f64, f64),
     tolerance: f64,
-) -> Option<crate::PaveBlockId> {
+) -> Option<(crate::PaveBlockId, VertexId)> {
     ensure_edge_endpoint_paves(bopds, edge_id, tolerance);
     let vertex_id = existing_vertex_for_parameter(bopds, edge_id, parameter, tolerance)
         .unwrap_or_else(|| bopds.next_generated_vertex_id());
@@ -357,7 +364,7 @@ fn register_edge_face_fact(
 
     let pave_block_id = locate_pave_block_for_parameter(bopds, edge_id, parameter, tolerance)?;
     register_overlap_common_block(bopds, edge_id, pave_block_id, face_id, surface_parameters);
-    Some(pave_block_id)
+    Some((pave_block_id, vertex_id))
 }
 
 fn ensure_edge_endpoint_paves(
@@ -389,7 +396,7 @@ fn existing_vertex_for_parameter(
     edge_id: EdgeId,
     parameter: f64,
     tolerance: f64,
-) -> Option<crate::VertexId> {
+) -> Option<VertexId> {
     bopds
         .paves_for_edge(edge_id)
         .into_iter()
@@ -474,24 +481,34 @@ fn bind_face_info_from_edge_face_fact(
     bopds: &mut BopDs,
     face_id: FaceId,
     parameter: f64,
+    surface_parameters: (f64, f64),
     pave_block_id: crate::PaveBlockId,
+    vertex_id: VertexId,
 ) {
     let common_block_paves = bopds
         .common_block_for_pave_block(pave_block_id)
         .and_then(|common_block_id| bopds.common_block(common_block_id))
         .map(|common_block| common_block.pave_blocks.clone());
-    let info = bopds.ensure_face_info(face_id);
+    let is_boundary = surface_parameters_on_boundary(surface_parameters);
     if let Some(common_block_paves) = common_block_paves {
-        info.push_on_pave_block(pave_block_id);
-        info.push_sc_pave_block(pave_block_id);
+        bopds.push_face_on_vertex(face_id, vertex_id);
+        bopds.push_face_sc_vertex(face_id, vertex_id);
+        bopds.push_face_on_pave_block(face_id, pave_block_id);
+        bopds.push_face_sc_pave_block(face_id, pave_block_id);
         for block in common_block_paves {
-            info.push_sc_pave_block(block);
+            bopds.push_face_sc_pave_block(face_id, block);
         }
         return;
     }
 
     if parameter.is_finite() {
-        info.push_in_pave_block(pave_block_id);
+        if is_boundary {
+            bopds.push_face_on_vertex(face_id, vertex_id);
+            bopds.push_face_on_pave_block(face_id, pave_block_id);
+        } else {
+            bopds.push_face_in_vertex(face_id, vertex_id);
+            bopds.push_face_in_pave_block(face_id, pave_block_id);
+        }
     }
 }
 
@@ -763,8 +780,11 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(bopds.pave_blocks_for_edge(EdgeId(10)).len(), 2);
         let info = bopds.face_info(FaceId(20)).expect("face info should be stored");
+        assert_eq!(info.on_vertices, Vec::<VertexId>::new());
+        assert_eq!(info.sc_vertices, Vec::<VertexId>::new());
         assert_eq!(info.on_pave_blocks, Vec::<crate::PaveBlockId>::new());
         assert_eq!(info.sc_pave_blocks, Vec::<crate::PaveBlockId>::new());
+        assert_eq!(info.in_vertices.len(), 1);
         assert_eq!(info.in_pave_blocks.len(), 1);
     }
 
@@ -783,7 +803,10 @@ mod tests {
 
         assert_eq!(count, 1);
         let info = bopds.face_info(FaceId(21)).expect("face info should be stored");
+        assert_eq!(info.in_vertices, Vec::<VertexId>::new());
         assert_eq!(info.in_pave_blocks, Vec::<crate::PaveBlockId>::new());
+        assert_eq!(info.on_vertices.len(), 1);
+        assert_eq!(info.sc_vertices.len(), 1);
         assert_eq!(info.on_pave_blocks.len(), 1);
         assert_eq!(info.sc_pave_blocks.len(), 1);
         let pave_block_id = info.on_pave_blocks[0];

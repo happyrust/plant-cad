@@ -165,6 +165,36 @@ impl BopDs {
         self.face_infos.entry(face_id).or_default()
     }
 
+    /// Registers a boundary vertex into the face-state pools.
+    pub fn push_face_on_vertex(&mut self, face_id: FaceId, vertex_id: VertexId) -> bool {
+        self.ensure_face_info(face_id).push_on_vertex(vertex_id)
+    }
+
+    /// Registers an interior vertex into the face-state pools.
+    pub fn push_face_in_vertex(&mut self, face_id: FaceId, vertex_id: VertexId) -> bool {
+        self.ensure_face_info(face_id).push_in_vertex(vertex_id)
+    }
+
+    /// Registers a section vertex into the face-state pools.
+    pub fn push_face_sc_vertex(&mut self, face_id: FaceId, vertex_id: VertexId) -> bool {
+        self.ensure_face_info(face_id).push_sc_vertex(vertex_id)
+    }
+
+    /// Registers a boundary pave block into the face-state pools.
+    pub fn push_face_on_pave_block(&mut self, face_id: FaceId, pave_block_id: PaveBlockId) -> bool {
+        self.ensure_face_info(face_id).push_on_pave_block(pave_block_id)
+    }
+
+    /// Registers an interior pave block into the face-state pools.
+    pub fn push_face_in_pave_block(&mut self, face_id: FaceId, pave_block_id: PaveBlockId) -> bool {
+        self.ensure_face_info(face_id).push_in_pave_block(pave_block_id)
+    }
+
+    /// Registers a section pave block into the face-state pools.
+    pub fn push_face_sc_pave_block(&mut self, face_id: FaceId, pave_block_id: PaveBlockId) -> bool {
+        self.ensure_face_info(face_id).push_sc_pave_block(pave_block_id)
+    }
+
     /// Borrows all common blocks stored in the data structure.
     pub fn common_blocks(&self) -> &[CommonBlock] { &self.common_blocks }
 
@@ -1286,13 +1316,15 @@ mod tests {
         let mut ds = BopDs::new();
         let face = FaceId(12);
 
-        ds.ensure_face_info(face)
-            .push_sc_pave_block(PaveBlockId(99));
+        assert!(ds.push_face_sc_pave_block(face, PaveBlockId(99)));
+        assert!(ds.push_face_on_vertex(face, VertexId(55)));
+        assert!(!ds.push_face_sc_pave_block(face, PaveBlockId(99)));
 
         let info = ds
             .face_info(face)
             .expect("face info should be created on demand");
         assert_eq!(info.sc_pave_blocks, vec![PaveBlockId(99)]);
+        assert_eq!(info.on_vertices, vec![VertexId(55)]);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {
