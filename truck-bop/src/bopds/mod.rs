@@ -9,6 +9,8 @@ mod pave;
 mod pave_block;
 pub(crate) mod shape_info;
 
+pub use common_block::CommonBlock;
+pub use face_info::FaceInfo;
 pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
@@ -35,7 +37,11 @@ pub struct BopDs {
     vertex_to_shape: FxHashMap<VertexId, ShapeId>,
     edge_to_shape: FxHashMap<EdgeId, ShapeId>,
     face_to_shape: FxHashMap<FaceId, ShapeId>,
+    face_infos: FxHashMap<FaceId, FaceInfo>,
     interferences: InterferenceTable,
+    common_blocks: Vec<CommonBlock>,
+    pave_block_to_common_block: FxHashMap<PaveBlockId, CommonBlockId>,
+    interference_pairs: FxHashMap<(ShapeId, ShapeId), usize>,
     paves: Vec<Pave>,
     pave_blocks: Vec<PaveBlock>,
     next_section_curve_id: u32,
@@ -51,7 +57,11 @@ impl BopDs {
             vertex_to_shape: FxHashMap::default(),
             edge_to_shape: FxHashMap::default(),
             face_to_shape: FxHashMap::default(),
+            face_infos: FxHashMap::default(),
             interferences: InterferenceTable::default(),
+            common_blocks: Vec::new(),
+            pave_block_to_common_block: FxHashMap::default(),
+            interference_pairs: FxHashMap::default(),
             paves: Vec::new(),
             pave_blocks: Vec::new(),
             next_section_curve_id: 0,
@@ -147,6 +157,51 @@ impl BopDs {
             .and_then(|shape_id| self.shape_info(shape_id))
     }
 
+    /// Returns the face-state record when it was already created.
+    pub fn face_info(&self, face_id: FaceId) -> Option<&FaceInfo> { self.face_infos.get(&face_id) }
+
+    /// Returns the face-state record, creating an empty one on demand.
+    pub fn ensure_face_info(&mut self, face_id: FaceId) -> &mut FaceInfo {
+        self.face_infos.entry(face_id).or_default()
+    }
+
+    /// Borrows all common blocks stored in the data structure.
+    pub fn common_blocks(&self) -> &[CommonBlock] { &self.common_blocks }
+
+    /// Borrows a common block by its identifier.
+    pub fn common_block(&self, common_block_id: CommonBlockId) -> Option<&CommonBlock> {
+        self.common_blocks.get(common_block_id.0 as usize)
+    }
+
+    /// Stores a common block and returns its identifier.
+    pub fn push_common_block(&mut self, common_block: CommonBlock) -> CommonBlockId {
+        let common_block_id = CommonBlockId(self.common_blocks.len() as u32);
+        for pave_block_id in common_block.pave_blocks.iter().copied() {
+            self.pave_block_to_common_block
+                .insert(pave_block_id, common_block_id);
+        }
+        self.common_blocks.push(common_block);
+        common_block_id
+    }
+
+    /// Returns the common-block identifier associated with a pave block.
+    pub fn common_block_for_pave_block(&self, pave_block_id: PaveBlockId) -> Option<CommonBlockId> {
+        self.pave_block_to_common_block.get(&pave_block_id).copied()
+    }
+
+    /// Stores a symmetric interference-pair index.
+    pub fn set_interference_pair_index(&mut self, lhs: ShapeId, rhs: ShapeId, index: usize) {
+        self.interference_pairs
+            .insert(canonical_shape_pair(lhs, rhs), index);
+    }
+
+    /// Returns the stored interference-pair index, independent of argument order.
+    pub fn interference_pair_index(&self, lhs: ShapeId, rhs: ShapeId) -> Option<usize> {
+        self.interference_pairs
+            .get(&canonical_shape_pair(lhs, rhs))
+            .copied()
+    }
+
     /// Store a vertex-vertex interference.
     pub fn push_vv_interference(&mut self, interference: VVInterference) {
         self.interferences.push_vv(interference);
@@ -235,13 +290,68 @@ impl BopDs {
         self.normalize_edge_paves(pave.edge);
     }
 
+    /// Appends an extra pave to the block that contains the parameter.
+    pub fn append_ext_pave(&mut self, edge_id: EdgeId, pave: Pave) -> bool {
+        let tolerance = self.options.parametric_tol.max(pave.tolerance);
+        let Some(index) = self.pave_blocks.iter().position(|block| {
+            block.original_edge == edge_id
+                && pave.parameter + tolerance >= block.param_range.0
+                && pave.parameter - tolerance <= block.param_range.1
+        }) else {
+            return false;
+        };
+        self.pave_blocks[index].append_ext_pave(pave, self.options.parametric_tol)
+    }
+
+    /// Rebuilds the base block partition from the normalized edge paves only.
+    pub fn rebuild_pave_blocks_from_paves(&mut self, edge_id: EdgeId) {
+        let edge_paves = self.paves_for_edge(edge_id);
+        self.pave_blocks
+            .retain(|block| block.original_edge != edge_id);
+        self.pave_blocks.extend(
+            edge_paves.windows(2).map(|pair| {
+                PaveBlock::from_pave_pair(pair[0], pair[1], self.options.parametric_tol)
+            }),
+        );
+    }
+
+    /// Splits every block on an edge using its endpoint paves plus block-local extra paves.
+    pub fn split_pave_blocks_for_edge(&mut self, edge_id: EdgeId) {
+        let original_blocks: Vec<PaveBlock> = self
+            .pave_blocks
+            .iter()
+            .filter(|block| block.original_edge == edge_id)
+            .cloned()
+            .collect();
+        self.pave_blocks
+            .retain(|block| block.original_edge != edge_id);
+
+        for mut block in original_blocks {
+            let ordered = block.ordered_paves(self.options.parametric_tol);
+            let split_result = ordered
+                .windows(2)
+                .map(|pair| (pair[0].vertex, pair[1].vertex))
+                .collect::<Vec<_>>();
+            block.split_result = Some(split_result.clone());
+
+            if split_result.len() <= 1 {
+                self.pave_blocks.push(block);
+                continue;
+            }
+
+            self.pave_blocks.extend(ordered.windows(2).map(|pair| {
+                PaveBlock::from_pave_pair(pair[0], pair[1], self.options.parametric_tol)
+            }));
+        }
+    }
+
     /// Rebuild sorted, deduplicated pave lists for all known edges while ensuring endpoints exist.
     pub fn rebuild_paves_for_edges<C>(&mut self, edges: &[(EdgeId, Edge<Point3, C>)])
     where C: Clone + ParametricCurve<Point = Point3> + BoundedCurve + Invertible {
         for &(edge_id, ref edge) in edges {
             self.ensure_edge_endpoints(edge_id, edge);
             self.normalize_edge_paves(edge_id);
-            self.rebuild_pave_blocks_for_edge(edge_id);
+            self.rebuild_pave_blocks_from_paves(edge_id);
         }
     }
 
@@ -258,7 +368,7 @@ impl BopDs {
     pub fn pave_blocks_for_edge(&self, edge_id: EdgeId) -> Vec<PaveBlock> {
         self.pave_blocks
             .iter()
-            .copied()
+            .cloned()
             .filter(|block| block.original_edge == edge_id)
             .collect()
     }
@@ -374,15 +484,13 @@ impl BopDs {
         self.paves.extend(normalized);
     }
 
-    fn rebuild_pave_blocks_for_edge(&mut self, edge_id: EdgeId) {
-        let edge_paves = self.paves_for_edge(edge_id);
-        self.pave_blocks
-            .retain(|block| block.original_edge != edge_id);
-        self.pave_blocks.extend(
-            edge_paves.windows(2).map(|pair| {
-                PaveBlock::from_pave_pair(pair[0], pair[1], self.options.parametric_tol)
-            }),
-        );
+}
+
+fn canonical_shape_pair(lhs: ShapeId, rhs: ShapeId) -> (ShapeId, ShapeId) {
+    if lhs <= rhs {
+        (lhs, rhs)
+    } else {
+        (rhs, lhs)
     }
 }
 
@@ -614,7 +722,7 @@ mod tests {
             ds.options.parametric_tol,
         ));
 
-        let block = ds.pave_blocks_for_edge(EdgeId(4))[0];
+        let block = ds.pave_blocks_for_edge(EdgeId(4))[0].clone();
         assert_eq!(block.start_vertex, VertexId(40));
         assert_eq!(block.end_vertex, VertexId(41));
         assert_eq!(block.param_range, (0.2, 0.8));
@@ -656,6 +764,121 @@ mod tests {
         let paves = ds.paves_for_edge(EdgeId(8));
         let blocks = ds.pave_blocks_for_edge(EdgeId(8));
         assert_eq!(blocks.len(), paves.len() - 1);
+    }
+
+    #[test]
+    fn paveblock_split_merges_extra_paves_in_deterministic_order() {
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+
+        ds.rebuild_paves_for_edges(&[(EdgeId(9), edge)]);
+        assert!(ds.append_ext_pave(
+            EdgeId(9),
+            Pave::new(EdgeId(9), VertexId(91), 0.75, 1.0e-6).unwrap()
+        ));
+        assert!(ds.append_ext_pave(
+            EdgeId(9),
+            Pave::new(EdgeId(9), VertexId(90), 0.25, 1.0e-6).unwrap()
+        ));
+        assert!(!ds.append_ext_pave(
+            EdgeId(9),
+            Pave::new(EdgeId(9), VertexId(89), 0.2500005, 1.0e-6).unwrap()
+        ));
+
+        ds.split_pave_blocks_for_edge(EdgeId(9));
+
+        let blocks = ds.pave_blocks_for_edge(EdgeId(9));
+        let ranges: Vec<(f64, f64)> = blocks.iter().map(|block| block.param_range).collect();
+        let vertices: Vec<(VertexId, VertexId)> = blocks
+            .iter()
+            .map(|block| (block.start_vertex, block.end_vertex))
+            .collect();
+
+        assert_eq!(ranges, vec![(0.0, 0.25), (0.25, 0.75), (0.75, 1.0)]);
+        assert_eq!(
+            vertices,
+            vec![
+                (VertexId(1_000_000), VertexId(90)),
+                (VertexId(90), VertexId(91)),
+                (VertexId(91), VertexId(1_000_001))
+            ]
+        );
+    }
+
+    #[test]
+    fn paveblock_split_records_child_linkage_before_replacement() {
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+
+        ds.rebuild_paves_for_edges(&[(EdgeId(10), edge)]);
+        assert!(ds.append_ext_pave(
+            EdgeId(10),
+            Pave::new(EdgeId(10), VertexId(101), 0.5, 1.0e-6).unwrap()
+        ));
+
+        let before = ds.pave_blocks_for_edge(EdgeId(10));
+        assert_eq!(before.len(), 1);
+        assert!(before[0].split_result.is_none());
+
+        ds.split_pave_blocks_for_edge(EdgeId(10));
+
+        let after = ds.pave_blocks_for_edge(EdgeId(10));
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].param_range, (0.0, 0.5));
+        assert_eq!(after[1].param_range, (0.5, 1.0));
+    }
+
+    #[test]
+    fn rebuild_pave_blocks_from_paves_discards_extra_split_state() {
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+
+        ds.rebuild_paves_for_edges(&[(EdgeId(11), edge)]);
+        assert!(ds.append_ext_pave(
+            EdgeId(11),
+            Pave::new(EdgeId(11), VertexId(111), 0.5, 1.0e-6).unwrap()
+        ));
+        ds.split_pave_blocks_for_edge(EdgeId(11));
+        assert_eq!(ds.pave_blocks_for_edge(EdgeId(11)).len(), 2);
+
+        ds.rebuild_pave_blocks_from_paves(EdgeId(11));
+
+        let rebuilt = ds.pave_blocks_for_edge(EdgeId(11));
+        assert_eq!(rebuilt.len(), 1);
+        assert!(rebuilt[0].ext_paves.is_empty());
+        assert!(rebuilt[0].split_result.is_none());
+        assert_eq!(rebuilt[0].param_range, (0.0, 1.0));
+    }
+
+    #[test]
+    fn paveblock_split_preserves_explicit_unsplittable_micro_segments() {
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-4,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+
+        ds.push_pave(Pave::new(EdgeId(12), VertexId(120), 0.25, 1.0e-8).unwrap());
+        ds.push_pave(Pave::new(EdgeId(12), VertexId(121), 0.25001, 1.0e-8).unwrap());
+        ds.rebuild_paves_for_edges(&[(EdgeId(12), edge)]);
+        ds.split_pave_blocks_for_edge(EdgeId(12));
+
+        let blocks = ds.pave_blocks_for_edge(EdgeId(12));
+        let micro = blocks
+            .iter()
+            .find(|block| block.param_range == (0.25, 0.25001))
+            .unwrap();
+        assert!(micro.unsplittable);
+        assert!(micro.ext_paves.is_empty());
     }
 
     #[test]
@@ -958,6 +1181,57 @@ mod tests {
             ds.split_faces()[0].classification,
             Some(PointClassification::OnBoundary)
         );
+    }
+
+    #[test]
+    fn bopds_can_bind_pave_block_to_common_block() {
+        use super::common_block::CommonBlock;
+
+        let mut ds = BopDs::new();
+        let common_block_id = ds.push_common_block(CommonBlock::new(
+            vec![PaveBlockId(3), PaveBlockId(4)],
+            vec![FaceId(7), FaceId(8)],
+            Some(EdgeId(21)),
+        ));
+
+        assert_eq!(
+            ds.common_block_for_pave_block(PaveBlockId(3)),
+            Some(common_block_id)
+        );
+        assert_eq!(
+            ds.common_block_for_pave_block(PaveBlockId(4)),
+            Some(common_block_id)
+        );
+        assert_eq!(
+            ds.common_blocks()[common_block_id.0 as usize].faces,
+            vec![FaceId(7), FaceId(8)]
+        );
+    }
+
+    #[test]
+    fn bopds_can_store_interference_pair_index() {
+        let mut ds = BopDs::new();
+        let a = ShapeId(3);
+        let b = ShapeId(9);
+
+        ds.set_interference_pair_index(a, b, 41);
+
+        assert_eq!(ds.interference_pair_index(a, b), Some(41));
+        assert_eq!(ds.interference_pair_index(b, a), Some(41));
+    }
+
+    #[test]
+    fn bopds_creates_face_info_lazily() {
+        let mut ds = BopDs::new();
+        let face = FaceId(12);
+
+        ds.ensure_face_info(face)
+            .push_sc_pave_block(PaveBlockId(99));
+
+        let info = ds
+            .face_info(face)
+            .expect("face info should be created on demand");
+        assert_eq!(info.sc_pave_blocks, vec![PaveBlockId(99)]);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {
