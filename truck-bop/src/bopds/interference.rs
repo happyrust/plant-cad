@@ -14,6 +14,77 @@ pub struct MergedVertex {
     pub point: truck_base::cgmath64::Point3,
 }
 
+/// Shared topology identity used across trimming, sewing, and rebuild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TrimmingTopologyKey {
+    /// Identity of a real source boundary edge from the original face topology.
+    SourceBoundary(EdgeId),
+    /// Identity of a generated section curve from face-face intersection.
+    SectionCurve(SectionCurveId),
+    /// Identity of a generated trimming edge that has no source topology.
+    Generated {
+        /// Source face that owns the generated trimmed edge.
+        face: FaceId,
+        /// Loop slot containing the generated trimmed edge.
+        loop_index: usize,
+        /// Edge slot inside the loop for this generated trimmed edge.
+        edge_index: usize,
+    },
+}
+
+/// Provenance of a trimming edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TrimmingEdgeProvenance {
+    /// The edge comes directly from a source face boundary.
+    SourceBoundary {
+        /// Source boundary edge identity.
+        edge: EdgeId,
+    },
+    /// The edge comes from a face-face section curve.
+    SectionCurve {
+        /// Section-curve identity shared by both owning faces.
+        section_curve: SectionCurveId,
+    },
+    /// The edge is synthesized within trimming/rebuild and has no source edge.
+    Generated,
+}
+
+impl TrimmingEdgeProvenance {
+    /// Returns the topology key implied by this provenance for a specific trimmed edge slot.
+    pub fn topology_key(
+        self,
+        face: FaceId,
+        loop_index: usize,
+        edge_index: usize,
+    ) -> TrimmingTopologyKey {
+        match self {
+            Self::SourceBoundary { edge } => TrimmingTopologyKey::SourceBoundary(edge),
+            Self::SectionCurve { section_curve } => TrimmingTopologyKey::SectionCurve(section_curve),
+            Self::Generated => TrimmingTopologyKey::Generated {
+                face,
+                loop_index,
+                edge_index,
+            },
+        }
+    }
+
+    /// Returns the source boundary identity when available.
+    pub fn source_boundary(self) -> Option<EdgeId> {
+        match self {
+            Self::SourceBoundary { edge } => Some(edge),
+            _ => None,
+        }
+    }
+
+    /// Returns the section-curve identity when available.
+    pub fn section_curve(self) -> Option<SectionCurveId> {
+        match self {
+            Self::SectionCurve { section_curve } => Some(section_curve),
+            _ => None,
+        }
+    }
+}
+
 /// An oriented fragment edge after sewing equivalent endpoints together.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SewnEdge {
@@ -31,8 +102,8 @@ pub struct SewnEdge {
     pub end_vertex: VertexId,
     /// Whether the edge orientation had to be reversed to follow the sewn path.
     pub reversed: bool,
-    /// Optional source section curve identifier when the edge came from a section.
-    pub section_curve: Option<SectionCurveId>,
+    /// Topology identity carried from the source trimming edge.
+    pub topology_key: TrimmingTopologyKey,
     /// Counterpart source edge when this edge was sewn to another fragment edge.
     pub sewn_pair: Option<SewnEdgePair>,
 }
@@ -46,8 +117,8 @@ pub struct SewnEdgeSource {
     pub loop_index: usize,
     /// Source edge index within the trimming loop.
     pub edge_index: usize,
-    /// Optional source topological edge identifier, when available.
-    pub original_edge: Option<EdgeId>,
+    /// Unified topology identity for the source trimmed edge.
+    pub topology_key: TrimmingTopologyKey,
 }
 
 /// Relation linking two fragment edges that were sewn together.
@@ -83,7 +154,7 @@ impl Ord for SewnEdgeSource {
             .cmp(&other.face)
             .then(self.loop_index.cmp(&other.loop_index))
             .then(self.edge_index.cmp(&other.edge_index))
-            .then(self.original_edge.cmp(&other.original_edge))
+            .then(self.topology_key.cmp(&other.topology_key))
     }
 }
 
@@ -116,10 +187,8 @@ pub struct SplitFace {
 /// A trimming edge represented in a face's parameter space.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrimmingEdge {
-    /// Optional source section curve for synthesized trimming edges.
-    pub section_curve: Option<SectionCurveId>,
-    /// Optional source boundary edge identifier when the edge comes from a real face boundary.
-    pub original_edge: Option<EdgeId>,
+    /// Explicit provenance for this trimming edge.
+    pub provenance: TrimmingEdgeProvenance,
     /// Polyline vertices in face UV space.
     pub uv_points: Vec<Point2>,
 }
@@ -441,8 +510,9 @@ mod tests {
             face: FaceId(1),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(2)),
-                original_edge: None,
+                provenance: TrimmingEdgeProvenance::SectionCurve {
+                    section_curve: SectionCurveId(2),
+                },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -466,8 +536,9 @@ mod tests {
             face: FaceId(1),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(2)),
-                original_edge: None,
+                provenance: TrimmingEdgeProvenance::SectionCurve {
+                    section_curve: SectionCurveId(2),
+                },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -515,7 +586,7 @@ mod tests {
                     face: FaceId(2),
                     loop_index: 0,
                     edge_index: 1,
-                    original_edge: Some(EdgeId(9)),
+                    topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(9)),
                 },
                 face: FaceId(2),
                 loop_index: 0,
@@ -523,19 +594,19 @@ mod tests {
                 start_vertex: VertexId(4),
                 end_vertex: VertexId(5),
                 reversed: false,
-                section_curve: Some(SectionCurveId(8)),
+                topology_key: TrimmingTopologyKey::SectionCurve(SectionCurveId(8)),
                 sewn_pair: Some(SewnEdgePair::new(
                     SewnEdgeSource {
                         face: FaceId(2),
                         loop_index: 0,
                         edge_index: 1,
-                        original_edge: Some(EdgeId(9)),
+                        topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(9)),
                     },
                     SewnEdgeSource {
                         face: FaceId(3),
                         loop_index: 1,
                         edge_index: 0,
-                        original_edge: Some(EdgeId(10)),
+                        topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(10)),
                     },
                 )),
             }],
@@ -553,15 +624,41 @@ mod tests {
             face: FaceId(4),
             loop_index: 2,
             edge_index: 1,
-            original_edge: Some(EdgeId(12)),
+            topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(12)),
         };
         let rhs = SewnEdgeSource {
             face: FaceId(1),
             loop_index: 0,
             edge_index: 3,
-            original_edge: Some(EdgeId(5)),
+            topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(5)),
         };
 
         assert_eq!(SewnEdgePair::new(lhs, rhs), SewnEdgePair::new(rhs, lhs));
+    }
+
+    #[test]
+    fn trimming_provenance_maps_to_topology_key_variants() {
+        let source = TrimmingEdgeProvenance::SourceBoundary { edge: EdgeId(7) };
+        let section = TrimmingEdgeProvenance::SectionCurve {
+            section_curve: SectionCurveId(3),
+        };
+        let generated = TrimmingEdgeProvenance::Generated;
+
+        assert_eq!(
+            source.topology_key(FaceId(1), 2, 3),
+            TrimmingTopologyKey::SourceBoundary(EdgeId(7))
+        );
+        assert_eq!(
+            section.topology_key(FaceId(1), 2, 3),
+            TrimmingTopologyKey::SectionCurve(SectionCurveId(3))
+        );
+        assert_eq!(
+            generated.topology_key(FaceId(1), 2, 3),
+            TrimmingTopologyKey::Generated {
+                face: FaceId(1),
+                loop_index: 2,
+                edge_index: 3,
+            }
+        );
     }
 }

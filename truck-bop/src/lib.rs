@@ -24,7 +24,8 @@ mod trim;
 
 pub use bopds::{
     BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId, SectionCurveId,
-    SewnEdge, SewnPath, ShapeId, SplitFace, VertexId,
+    SewnEdge, SewnPath, ShapeId, SplitFace, TrimmingEdge, TrimmingEdgeProvenance,
+    TrimmingLoop, TrimmingTopologyKey, VertexId,
 };
 pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use broad_phase::{

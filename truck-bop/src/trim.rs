@@ -517,10 +517,10 @@ fn canonical_rebuilt_edge(
     start: VertexId,
     end: VertexId,
 ) -> CanonicalRebuiltEdge {
-    if let Some(section_curve_id) = edge.section_curve {
+    if let Some(section_curve_id) = edge.provenance.section_curve() {
         return CanonicalRebuiltEdge::Source(edge_id_from_section_curve(section_curve_id));
     }
-    if let Some(original_edge) = edge.original_edge {
+    if let Some(original_edge) = edge.provenance.source_boundary() {
         return CanonicalRebuiltEdge::Source(original_edge);
     }
 
@@ -605,7 +605,7 @@ where
         if trimming_loop
             .edges
             .iter()
-            .any(|edge| edge.section_curve.is_some() || edge.original_edge.is_none())
+            .any(|edge| !matches!(edge.provenance, crate::TrimmingEdgeProvenance::SourceBoundary { .. }))
         {
             return false;
         }
@@ -613,7 +613,7 @@ where
         let loop_edges: Vec<_> = trimming_loop
             .edges
             .iter()
-            .filter_map(|edge| edge.original_edge)
+            .filter_map(|edge| edge.provenance.source_boundary())
             .collect();
         let Some((boundary_index, _)) =
             original_boundaries
@@ -1008,9 +1008,11 @@ fn collect_sewn_edges(
                     face: split_face.original_face,
                     loop_index,
                     edge_index,
-                    original_edge: edge
-                        .original_edge
-                        .or(edge.section_curve.map(edge_id_from_section_curve)),
+                    topology_key: edge.provenance.topology_key(
+                        split_face.original_face,
+                        loop_index,
+                        edge_index,
+                    ),
                 };
                 shared_sources.entry(undirected).or_default().push(source);
                 let reversed = near_points(raw_start, loop_end) && near_points(raw_end, loop_start);
@@ -1022,7 +1024,7 @@ fn collect_sewn_edges(
                     start_vertex: sewn_start,
                     end_vertex: sewn_end,
                     reversed,
-                    section_curve: edge.section_curve,
+                    topology_key: edge.provenance.topology_key(split_face.original_face, loop_index, edge_index),
                     sewn_pair: None,
                 });
             }
@@ -1035,7 +1037,7 @@ fn collect_sewn_edges(
             continue;
         };
 
-        if edge.section_curve.is_some() {
+        if matches!(edge.topology_key, crate::TrimmingTopologyKey::SectionCurve(_)) {
             edge.sewn_pair = sources
                 .iter()
                 .copied()
@@ -1050,7 +1052,7 @@ fn collect_sewn_edges(
         }
     }
 
-    edges.retain(|edge| edge.section_curve.is_some() || edge.sewn_pair.is_some());
+    edges.retain(|edge| matches!(edge.topology_key, crate::TrimmingTopologyKey::SectionCurve(_)) || edge.sewn_pair.is_some());
 
     edges.sort_by(|lhs, rhs| {
         lhs.start_vertex
@@ -1435,8 +1437,9 @@ where
         loops.push(loop_from_polyline(
             face_id,
             vec![TrimmingEdge {
-                section_curve: Some(section_curve.id),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve {
+                    section_curve: section_curve.id,
+                },
                 uv_points: closed.clone(),
             }],
             closed,
@@ -1487,8 +1490,9 @@ where
             .edge_iter()
             .zip(closed.windows(2))
             .map(|(edge, segment)| TrimmingEdge {
-                section_curve: None,
-                original_edge: Some(edge_id_from_source_boundary(edge)),
+                provenance: crate::TrimmingEdgeProvenance::SourceBoundary {
+                    edge: edge_id_from_source_boundary(edge),
+                },
                 uv_points: vec![segment[0], segment[1]],
             })
             .collect();
@@ -1619,7 +1623,7 @@ fn collect_splitting_edges(trimming_loops: &[TrimmingLoop]) -> Vec<SectionCurveI
     let mut splitting_edges = Vec::new();
     for trimming_loop in trimming_loops {
         for edge in &trimming_loop.edges {
-            let Some(section_curve) = edge.section_curve else {
+            let Some(section_curve) = edge.provenance.section_curve() else {
                 continue;
             };
             if !splitting_edges.contains(&section_curve) {
@@ -1899,7 +1903,10 @@ mod tests {
         let original_edges: Vec<_> = paths
             .iter()
             .flat_map(|path| path.edges.iter())
-            .map(|edge| edge.source.original_edge)
+            .map(|edge| match edge.source.topology_key {
+                crate::TrimmingTopologyKey::SourceBoundary(edge) => Some(edge),
+                _ => None,
+            })
             .collect();
         assert!(!original_edges.is_empty());
         assert!(original_edges.iter().all(|edge| edge.is_some()));
@@ -1958,7 +1965,7 @@ mod tests {
         let hole = loops.iter().find(|loop_| !loop_.is_outer).unwrap();
         assert_eq!(hole.uv_points.first(), hole.uv_points.last());
         assert_eq!(hole.edges.len(), 1);
-        assert_eq!(hole.edges[0].section_curve, Some(section_curve_id));
+        assert_eq!(hole.edges[0].provenance.section_curve(), Some(section_curve_id));
     }
 
     #[test]
@@ -1978,8 +1985,8 @@ mod tests {
         let outer = loops.iter().find(|loop_| loop_.is_outer).unwrap();
         let inner = loops.iter().find(|loop_| !loop_.is_outer).unwrap();
         assert!(outer.signed_area.abs() > inner.signed_area.abs());
-        assert!(outer.edges.iter().all(|edge| edge.section_curve.is_none()));
-        assert!(inner.edges.iter().all(|edge| edge.section_curve.is_none()));
+        assert!(outer.edges.iter().all(|edge| edge.provenance.section_curve().is_none()));
+        assert!(inner.edges.iter().all(|edge| edge.provenance.section_curve().is_none()));
     }
 
     #[test]
@@ -1989,23 +1996,19 @@ mod tests {
             vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
             edges: vec![
                 TrimmingEdge {
-                    section_curve: Some(SectionCurveId(1)),
-                    original_edge: None,
+                    provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: SectionCurveId(1) },
                     uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
                 },
                 TrimmingEdge {
-                    section_curve: Some(SectionCurveId(2)),
-                    original_edge: None,
+                    provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: SectionCurveId(2) },
                     uv_points: vec![Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)],
                 },
                 TrimmingEdge {
-                    section_curve: Some(SectionCurveId(3)),
-                    original_edge: None,
+                    provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: SectionCurveId(3) },
                     uv_points: vec![Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)],
                 },
                 TrimmingEdge {
-                    section_curve: Some(SectionCurveId(4)),
-                    original_edge: None,
+                    provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: SectionCurveId(4) },
                     uv_points: vec![Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)],
                 },
             ],
@@ -2023,7 +2026,7 @@ mod tests {
         reverse_trimming_loop(&mut loop_record, true);
 
         assert_eq!(loop_record.uv_points.first(), loop_record.uv_points.last());
-        assert_eq!(loop_record.edges[0].section_curve, Some(SectionCurveId(4)));
+        assert_eq!(loop_record.edges[0].provenance.section_curve(), Some(SectionCurveId(4)));
         assert_eq!(
             loop_record.edges[0].uv_points,
             vec![Point2::new(0.0, 0.0), Point2::new(0.0, 1.0)]
@@ -2282,8 +2285,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(first_section),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: first_section },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -2300,8 +2302,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(4), VertexId(5), VertexId(6), VertexId(7)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(second_section),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: second_section },
                 uv_points: vec![Point2::new(2.0, 0.0), Point2::new(3.0, 0.0)],
             }],
             uv_points: vec![
@@ -2318,8 +2319,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(8), VertexId(9), VertexId(10), VertexId(11)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(99)),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: SectionCurveId(99) },
                 uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
             }],
             uv_points: vec![
@@ -2356,8 +2356,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(12), VertexId(13), VertexId(14), VertexId(15)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(outer_a),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: outer_a },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(4.0, 0.0)],
             }],
             uv_points: vec![
@@ -2374,8 +2373,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(16), VertexId(17), VertexId(18), VertexId(19)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(outer_b),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: outer_b },
                 uv_points: vec![Point2::new(5.0, 0.0), Point2::new(7.0, 0.0)],
             }],
             uv_points: vec![
@@ -2392,8 +2390,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(20), VertexId(21), VertexId(22), VertexId(23)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(hole),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: hole },
                 uv_points: vec![Point2::new(1.0, 1.0), Point2::new(2.0, 1.0)],
             }],
             uv_points: vec![
@@ -2426,8 +2423,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(24), VertexId(25), VertexId(26), VertexId(27)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(outer),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: outer },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(6.0, 0.0)],
             }],
             uv_points: vec![
@@ -2444,8 +2440,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(28), VertexId(29), VertexId(30), VertexId(31)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(nested_outer),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: nested_outer },
                 uv_points: vec![Point2::new(1.0, 1.0), Point2::new(5.0, 1.0)],
             }],
             uv_points: vec![
@@ -2462,8 +2457,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(32), VertexId(33), VertexId(34), VertexId(35)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(hole),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: hole },
                 uv_points: vec![Point2::new(2.0, 2.0), Point2::new(3.0, 2.0)],
             }],
             uv_points: vec![
@@ -2495,8 +2489,7 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(40), VertexId(41), VertexId(42), VertexId(43)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(7)),
-                original_edge: None,
+                provenance: crate::TrimmingEdgeProvenance::SectionCurve { section_curve: SectionCurveId(7) },
                 uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
             }],
             uv_points: vec![
@@ -3224,8 +3217,8 @@ mod tests {
         assert!(!paths[0].is_closed);
         assert_eq!(paths[0].edges.len(), 2);
         assert_eq!(paths[0].edges[0].end_vertex, paths[0].edges[1].start_vertex);
-        assert_eq!(paths[0].edges[0].section_curve, Some(SectionCurveId(7)));
-        assert_eq!(paths[0].edges[1].section_curve, Some(SectionCurveId(8)));
+        assert_eq!(paths[0].edges[0].topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(7)));
+        assert_eq!(paths[0].edges[1].topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(8)));
         assert!(paths[0].edges[1].reversed);
     }
 
@@ -3348,8 +3341,8 @@ mod tests {
             sewn_pairs,
             vec![(VertexId(1), VertexId(2)), (VertexId(1), VertexId(2))]
         );
-        assert_eq!(paths[0].edges[0].source.original_edge, None);
-        assert_eq!(paths[0].edges[1].source.original_edge, None);
+        assert!(matches!(paths[0].edges[0].source.topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(7))));
+        assert!(matches!(paths[0].edges[1].source.topology_key, crate::TrimmingTopologyKey::SectionCurve(SectionCurveId(8))));
         assert_eq!(
             paths[0].edges[0].sewn_pair,
             Some(SewnEdgePair::new(
@@ -3411,8 +3404,8 @@ mod tests {
 
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].edges.len(), 2);
-        assert_eq!(paths[0].edges[0].source.original_edge, Some(EdgeId(7)));
-        assert_eq!(paths[0].edges[1].source.original_edge, Some(EdgeId(8)));
+        assert_eq!(paths[0].edges[0].source.topology_key, crate::TrimmingTopologyKey::SourceBoundary(EdgeId(7)));
+        assert_eq!(paths[0].edges[1].source.topology_key, crate::TrimmingTopologyKey::SourceBoundary(EdgeId(8)));
         assert!(paths[0].edges.iter().all(|edge| edge.sewn_pair.is_none()));
     }
 
@@ -3990,8 +3983,7 @@ mod tests {
                 vertex_ids: vec![VertexId(100), VertexId(101), VertexId(102), VertexId(103)],
                 edges: vec![
                     TrimmingEdge {
-                        section_curve: None,
-                        original_edge: None,
+                        provenance: crate::TrimmingEdgeProvenance::Generated,
                         uv_points: vec![
                             Point2::new(0.0, 0.0),
                             Point2::new(1.0, 0.0),
@@ -4018,8 +4010,7 @@ mod tests {
                 vertex_ids: vec![VertexId(100), VertexId(101), VertexId(111), VertexId(112)],
                 edges: vec![
                     TrimmingEdge {
-                        section_curve: None,
-                        original_edge: None,
+                        provenance: crate::TrimmingEdgeProvenance::Generated,
                         uv_points: vec![
                             Point2::new(1.0, 0.0),
                             Point2::new(0.0, 0.0),
@@ -4403,8 +4394,9 @@ mod tests {
         end: Point2,
     ) -> TrimmingEdge {
         TrimmingEdge {
-            section_curve,
-            original_edge: None,
+            provenance: section_curve
+                .map(|section_curve| crate::TrimmingEdgeProvenance::SectionCurve { section_curve })
+                .unwrap_or(crate::TrimmingEdgeProvenance::Generated),
             uv_points: vec![start, end],
         }
     }

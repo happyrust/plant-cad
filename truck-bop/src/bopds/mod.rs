@@ -12,8 +12,9 @@ pub(crate) mod shape_info;
 pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
-    SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop,
-    VEInterference, VFInterference, VVInterference,
+    SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
+    TrimmingEdgeProvenance, TrimmingLoop, TrimmingTopologyKey, VEInterference, VFInterference,
+    VVInterference,
 };
 pub use pave::Pave;
 pub use pave_block::PaveBlock;
@@ -804,8 +805,9 @@ mod tests {
             face: FaceId(3),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(0)),
-                original_edge: None,
+                provenance: TrimmingEdgeProvenance::SectionCurve {
+                    section_curve: SectionCurveId(0),
+                },
                 uv_points: vec![
                     truck_base::cgmath64::Point2::new(0.0, 0.0),
                     truck_base::cgmath64::Point2::new(1.0, 0.0),
@@ -835,8 +837,9 @@ mod tests {
                 face: FaceId(3),
                 vertex_ids: vec![VertexId(1), VertexId(2)],
                 edges: vec![TrimmingEdge {
-                    section_curve: Some(SectionCurveId(0)),
-                    original_edge: None,
+                    provenance: TrimmingEdgeProvenance::SectionCurve {
+                        section_curve: SectionCurveId(0),
+                    },
                     uv_points: vec![
                         truck_base::cgmath64::Point2::new(0.0, 0.0),
                         truck_base::cgmath64::Point2::new(1.0, 0.0),
@@ -897,7 +900,7 @@ mod tests {
                     face: FaceId(0),
                     loop_index: 0,
                     edge_index: 0,
-                    original_edge: Some(EdgeId(11)),
+                    topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(11)),
                 },
                 face: FaceId(0),
                 loop_index: 0,
@@ -905,19 +908,19 @@ mod tests {
                 start_vertex: VertexId(1),
                 end_vertex: VertexId(2),
                 reversed: false,
-                section_curve: None,
+                topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(11)),
                 sewn_pair: Some(SewnEdgePair::new(
                     SewnEdgeSource {
                         face: FaceId(0),
                         loop_index: 0,
                         edge_index: 0,
-                        original_edge: Some(EdgeId(11)),
+                        topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(11)),
                     },
                     SewnEdgeSource {
                         face: FaceId(1),
                         loop_index: 0,
                         edge_index: 0,
-                        original_edge: Some(EdgeId(12)),
+                        topology_key: TrimmingTopologyKey::SourceBoundary(EdgeId(12)),
                     },
                 )),
             }],
