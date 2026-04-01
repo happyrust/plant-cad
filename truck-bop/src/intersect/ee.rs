@@ -1,7 +1,10 @@
 //! Edge-Edge intersection detection.
 
-use crate::{BopError, BopOptions, EdgeId};
-use truck_base::cgmath64::{EuclideanSpace, MetricSpace, Point3};
+use crate::{
+    bopds::{CommonBlock, EEInterference, EEInterferenceKind, Pave},
+    BopDs, BopError, BopOptions, EdgeId,
+};
+use truck_base::cgmath64::{EuclideanSpace, InnerSpace, MetricSpace, Point3};
 use truck_geotrait::{algo::curve, BoundedCurve, Invertible, ParametricCurve};
 use truck_topology::Edge;
 
@@ -72,6 +75,111 @@ where
     Ok(intersections)
 }
 
+/// Detects edge-edge interferences and stores shared-vertex or shared-overlap facts in `BopDs`.
+pub fn intersect_ee_into_bopds<C>(
+    bopds: &mut BopDs,
+    edges: &[(EdgeId, Edge<Point3, C>)],
+    candidates: &[(EdgeId, EdgeId)],
+) -> usize
+where
+    C: Clone
+        + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+        + BoundedCurve
+        + Invertible,
+{
+    let tolerance = bopds.options().geometric_tol;
+    let parametric_tol = bopds.options().parametric_tol;
+    let mut count = 0;
+
+    for &(edge_a_id, edge_b_id) in candidates {
+        let Some(edge_a) = edge_by_id(edges, edge_a_id) else {
+            continue;
+        };
+        let Some(edge_b) = edge_by_id(edges, edge_b_id) else {
+            continue;
+        };
+
+        if let Some(overlap) = line_overlap_range(edge_a, edge_b, tolerance) {
+            let common_block_id = bopds.push_common_block(CommonBlock::new(
+                vec![crate::PaveBlockId(0), crate::PaveBlockId(0)],
+                vec![],
+                Some(edge_a_id),
+            ));
+            bopds.push_ee_interference(EEInterference {
+                edge1: edge_a_id,
+                edge2: edge_b_id,
+                t_a: overlap.t_a.0,
+                t_b: overlap.t_b.0,
+                kind: EEInterferenceKind::OverlapHit,
+            });
+            bopds.push_ee_interference(EEInterference {
+                edge1: edge_a_id,
+                edge2: edge_b_id,
+                t_a: overlap.t_a.1,
+                t_b: overlap.t_b.1,
+                kind: EEInterferenceKind::OverlapHit,
+            });
+            let _ = common_block_id;
+            count += 1;
+            continue;
+        }
+
+        let overlaps = detect_overlap_ranges(edge_a, edge_b, tolerance);
+        if !overlaps.is_empty() {
+            for overlap in overlaps {
+                let _ = overlap;
+                let _ = parametric_tol;
+                bopds.push_common_block(CommonBlock::new(
+                    vec![crate::PaveBlockId(0), crate::PaveBlockId(0)],
+                    vec![],
+                    Some(edge_a_id),
+                ));
+
+                bopds.push_ee_interference(EEInterference {
+                    edge1: edge_a_id,
+                    edge2: edge_b_id,
+                    t_a: overlap.t_a.0,
+                    t_b: overlap.t_b.0,
+                    kind: EEInterferenceKind::OverlapHit,
+                });
+                bopds.push_ee_interference(EEInterference {
+                    edge1: edge_a_id,
+                    edge2: edge_b_id,
+                    t_a: overlap.t_a.1,
+                    t_b: overlap.t_b.1,
+                    kind: EEInterferenceKind::OverlapHit,
+                });
+                count += 1;
+            }
+            continue;
+        }
+
+        let Ok(intersections) = intersect_ee(edge_a_id, edge_b_id, edge_a, edge_b, bopds.options())
+        else {
+            continue;
+        };
+        for (_, _, t_a, t_b) in intersections {
+            let vertex_id = bopds.next_generated_vertex_id();
+            let pave_a = Pave::new(edge_a_id, vertex_id, t_a, parametric_tol).unwrap();
+            let pave_b = Pave::new(edge_b_id, vertex_id, t_b, parametric_tol).unwrap();
+            append_or_push_split_pave(bopds, edge_a_id, pave_a, edge_parameter_range(edge_a));
+            append_or_push_split_pave(bopds, edge_b_id, pave_b, edge_parameter_range(edge_b));
+            bopds.split_pave_blocks_for_edge(edge_a_id);
+            bopds.split_pave_blocks_for_edge(edge_b_id);
+            bopds.push_ee_interference(EEInterference {
+                edge1: edge_a_id,
+                edge2: edge_b_id,
+                t_a,
+                t_b,
+                kind: EEInterferenceKind::VertexHit,
+            });
+            count += 1;
+        }
+    }
+
+    count
+}
+
 fn refine_intersection<C>(
     curve_a: &C,
     curve_b: &C,
@@ -125,9 +233,242 @@ fn push_unique_intersection(
     intersections.push((edge_a_id, edge_b_id, t_a, t_b));
 }
 
+fn append_or_push_split_pave(
+    bopds: &mut BopDs,
+    edge_id: EdgeId,
+    pave: Pave,
+    edge_range: (f64, f64),
+) {
+    let near_endpoint = (pave.parameter - edge_range.0).abs() <= pave.tolerance
+        || (pave.parameter - edge_range.1).abs() <= pave.tolerance;
+    let inserted = if near_endpoint {
+        false
+    } else {
+        bopds.append_ext_pave(edge_id, pave)
+    };
+    if !inserted {
+        bopds.push_pave(pave);
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+    }
+}
+
+fn edge_parameter_range<C>(edge: &Edge<Point3, C>) -> (f64, f64)
+where
+    C: Clone
+        + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+        + BoundedCurve
+        + Invertible,
+{
+    edge.oriented_curve().range_tuple()
+}
+
+
+fn edge_by_id<C>(edges: &[(EdgeId, Edge<Point3, C>)], edge_id: EdgeId) -> Option<&Edge<Point3, C>> {
+    edges
+        .iter()
+        .find(|(id, _)| *id == edge_id)
+        .map(|(_, edge)| edge)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OverlapRange {
+    t_a: (f64, f64),
+    t_b: (f64, f64),
+}
+
+fn detect_overlap_ranges<C>(
+    edge_a: &Edge<Point3, C>,
+    edge_b: &Edge<Point3, C>,
+    tolerance: f64,
+) -> Vec<OverlapRange>
+where
+    C: Clone
+        + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+        + BoundedCurve
+        + Invertible,
+{
+    let curve_a = edge_a.oriented_curve();
+    let curve_b = edge_b.oriented_curve();
+    let range_a = curve_a.range_tuple();
+    let range_b = curve_b.range_tuple();
+
+    if !edge_segments_are_colinear(&curve_a, &curve_b, range_a, range_b, tolerance) {
+        return Vec::new();
+    }
+
+    let start_a = curve_a.subs(range_a.0);
+    let end_a = curve_a.subs(range_a.1);
+    let start_b = curve_b.subs(range_b.0);
+    let end_b = curve_b.subs(range_b.1);
+
+    let point_on_b = |point: Point3| -> Option<f64> {
+        let hint = curve::presearch(&curve_b, point, range_b, PRESEARCH_DIVISION);
+        let parameter = curve::search_parameter(&curve_b, point, hint, SEARCH_PARAMETER_TRIALS)?;
+        (curve_b.subs(parameter).distance(point) <= tolerance).then_some(parameter)
+    };
+
+    let point_on_a = |point: Point3| -> Option<f64> {
+        let hint = curve::presearch(&curve_a, point, range_a, PRESEARCH_DIVISION);
+        let parameter = curve::search_parameter(&curve_a, point, hint, SEARCH_PARAMETER_TRIALS)?;
+        (curve_a.subs(parameter).distance(point) <= tolerance).then_some(parameter)
+    };
+
+    let mut hits = Vec::new();
+    if let Some(t_b) = point_on_b(start_a) {
+        hits.push((range_a.0, t_b));
+    }
+    if let Some(t_b) = point_on_b(end_a) {
+        hits.push((range_a.1, t_b));
+    }
+    if let Some(t_a) = point_on_a(start_b) {
+        hits.push((t_a, range_b.0));
+    }
+    if let Some(t_a) = point_on_a(end_b) {
+        hits.push((t_a, range_b.1));
+    }
+
+    hits.sort_by(|lhs, rhs| lhs.0.total_cmp(&rhs.0).then(lhs.1.total_cmp(&rhs.1)));
+    hits.dedup_by(|lhs, rhs| {
+        (lhs.0 - rhs.0).abs() <= tolerance && (lhs.1 - rhs.1).abs() <= tolerance
+    });
+
+    if hits.len() < 2 {
+        return Vec::new();
+    }
+
+    let first = hits.first().copied().unwrap();
+    let last = hits.last().copied().unwrap();
+    if (first.0 - last.0).abs() <= tolerance || (first.1 - last.1).abs() <= tolerance {
+        return Vec::new();
+    }
+
+    vec![OverlapRange {
+        t_a: if first.0 <= last.0 {
+            (first.0, last.0)
+        } else {
+            (last.0, first.0)
+        },
+        t_b: if first.1 <= last.1 {
+            (first.1, last.1)
+        } else {
+            (last.1, first.1)
+        },
+    }]
+}
+
+fn line_overlap_range<C>(
+    edge_a: &Edge<Point3, C>,
+    edge_b: &Edge<Point3, C>,
+    tolerance: f64,
+) -> Option<OverlapRange>
+where
+    C: Clone
+        + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
+        + BoundedCurve
+        + Invertible,
+{
+    let curve_a = edge_a.oriented_curve();
+    let curve_b = edge_b.oriented_curve();
+    let range_a = curve_a.range_tuple();
+    let range_b = curve_b.range_tuple();
+    let start_a = curve_a.subs(range_a.0);
+    let end_a = curve_a.subs(range_a.1);
+    let start_b = curve_b.subs(range_b.0);
+    let end_b = curve_b.subs(range_b.1);
+
+    if !points_are_colinear(start_a, end_a, start_b, tolerance)
+        || !points_are_colinear(start_a, end_a, end_b, tolerance)
+    {
+        return None;
+    }
+
+    let axis = dominant_axis(end_a - start_a)?;
+    let (a0, a1) = ordered_pair(select_axis(start_a, axis), select_axis(end_a, axis));
+    let (b0, b1) = ordered_pair(select_axis(start_b, axis), select_axis(end_b, axis));
+    let overlap_start = a0.max(b0);
+    let overlap_end = a1.min(b1);
+    if overlap_end - overlap_start <= tolerance {
+        return None;
+    }
+
+    let t_a = point_to_parameter(overlap_start, a0, a1, range_a);
+    let t_b = point_to_parameter(overlap_start, b0, b1, range_b);
+    let end_t_a = point_to_parameter(overlap_end, a0, a1, range_a);
+    let end_t_b = point_to_parameter(overlap_end, b0, b1, range_b);
+
+    Some(OverlapRange {
+        t_a: ordered_pair(t_a, end_t_a),
+        t_b: ordered_pair(t_b, end_t_b),
+    })
+}
+
+fn points_are_colinear(a: Point3, b: Point3, c: Point3, tolerance: f64) -> bool {
+    let tolerance_sq = tolerance * tolerance;
+    (b - a).cross(c - a).magnitude2() <= tolerance_sq
+}
+
+fn dominant_axis(vector: <Point3 as EuclideanSpace>::Diff) -> Option<usize> {
+    let components = [vector.x.abs(), vector.y.abs(), vector.z.abs()];
+    components
+        .iter()
+        .enumerate()
+        .max_by(|lhs, rhs| lhs.1.total_cmp(rhs.1))
+        .and_then(|(index, value)| if *value > 0.0 { Some(index) } else { None })
+}
+
+fn select_axis(point: Point3, axis: usize) -> f64 {
+    match axis {
+        0 => point.x,
+        1 => point.y,
+        _ => point.z,
+    }
+}
+
+fn ordered_pair(lhs: f64, rhs: f64) -> (f64, f64) {
+    if lhs <= rhs {
+        (lhs, rhs)
+    } else {
+        (rhs, lhs)
+    }
+}
+
+fn point_to_parameter(value: f64, range_start: f64, range_end: f64, parameter_range: (f64, f64)) -> f64 {
+    let span = range_end - range_start;
+    if span.abs() <= f64::EPSILON {
+        parameter_range.0
+    } else {
+        parameter_range.0 + (value - range_start) / span * (parameter_range.1 - parameter_range.0)
+    }
+}
+
+fn edge_segments_are_colinear<C>(
+    curve_a: &C,
+    curve_b: &C,
+    range_a: (f64, f64),
+    range_b: (f64, f64),
+    tolerance: f64,
+) -> bool
+where
+    C: ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>,
+{
+    let start_a = curve_a.subs(range_a.0);
+    let end_a = curve_a.subs(range_a.1);
+    let start_b = curve_b.subs(range_b.0);
+    let end_b = curve_b.subs(range_b.1);
+
+    let dir_a = end_a - start_a;
+    let dir_b = end_b - start_b;
+    let tolerance_sq = tolerance * tolerance;
+
+    dir_a.cross(dir_b).magnitude2() <= tolerance_sq
+        && dir_a.cross(start_b - start_a).magnitude2() <= tolerance_sq
+        && dir_a.cross(end_b - start_a).magnitude2() <= tolerance_sq
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{bopds::EEInterferenceKind, BopDs};
     use truck_base::cgmath64::Point3;
     use truck_modeling::{builder, Curve};
 
@@ -191,6 +532,91 @@ mod tests {
 
         assert!(parameter_in_range(t_a, range_a, 1.0e-12));
         assert!(parameter_in_range(t_b, range_b, 1.0e-12));
+    }
+
+    #[test]
+    fn ee_intersection_into_bopds_splits_both_edges_for_perpendicular_hit() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-6,
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge_a = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        let edge_b = line_edge(Point3::new(0.5, -0.5, 0.0), Point3::new(0.5, 0.5, 0.0));
+        bopds.rebuild_paves_for_edges(&[(EdgeId(10), edge_a.clone()), (EdgeId(11), edge_b.clone())]);
+
+        let count = intersect_ee_into_bopds(
+            &mut bopds,
+            &[(EdgeId(10), edge_a), (EdgeId(11), edge_b)],
+            &[(EdgeId(10), EdgeId(11))],
+        );
+
+        assert_eq!(count, 1);
+        assert_eq!(bopds.ee_interferences().len(), 1);
+        assert_eq!(bopds.ee_interferences()[0].kind, EEInterferenceKind::VertexHit);
+        assert_eq!(
+            bopds.pave_blocks_for_edge(EdgeId(10))
+                .iter()
+                .map(|block| block.param_range)
+                .collect::<Vec<_>>(),
+            vec![(0.0, 0.5), (0.5, 1.0)]
+        );
+        assert_eq!(
+            bopds.pave_blocks_for_edge(EdgeId(11))
+                .iter()
+                .map(|block| block.param_range)
+                .collect::<Vec<_>>(),
+            vec![(0.0, 0.5), (0.5, 1.0)]
+        );
+    }
+
+    #[test]
+    fn ee_intersection_into_bopds_reuses_endpoint_touch_without_duplicate_split() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-6,
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge_a = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        let edge_b = line_edge(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 1.0, 0.0));
+        bopds.rebuild_paves_for_edges(&[(EdgeId(12), edge_a.clone()), (EdgeId(13), edge_b.clone())]);
+
+        let count = intersect_ee_into_bopds(
+            &mut bopds,
+            &[(EdgeId(12), edge_a), (EdgeId(13), edge_b)],
+            &[(EdgeId(12), EdgeId(13))],
+        );
+
+        assert_eq!(count, 1);
+        assert_eq!(bopds.ee_interferences()[0].kind, EEInterferenceKind::VertexHit);
+        assert_eq!(bopds.pave_blocks_for_edge(EdgeId(12)).len(), 1);
+        assert_eq!(bopds.pave_blocks_for_edge(EdgeId(13)).len(), 1);
+    }
+
+    #[test]
+    fn ee_intersection_into_bopds_promotes_colinear_overlap_to_common_block_ready_facts() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            geometric_tol: 1.0e-6,
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge_a = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+        let edge_b = line_edge(Point3::new(0.25, 0.0, 0.0), Point3::new(0.75, 0.0, 0.0));
+        bopds.rebuild_paves_for_edges(&[(EdgeId(20), edge_a.clone()), (EdgeId(21), edge_b.clone())]);
+
+        let count = intersect_ee_into_bopds(
+            &mut bopds,
+            &[(EdgeId(20), edge_a), (EdgeId(21), edge_b)],
+            &[(EdgeId(20), EdgeId(21))],
+        );
+
+        assert_eq!(count, 1);
+        assert_eq!(bopds.ee_interferences().len(), 2);
+        assert!(bopds
+            .ee_interferences()
+            .iter()
+            .all(|item| item.kind == EEInterferenceKind::OverlapHit));
+        assert_eq!(bopds.common_blocks().len(), 1);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, Curve> {

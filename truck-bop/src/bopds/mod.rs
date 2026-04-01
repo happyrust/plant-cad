@@ -13,8 +13,8 @@ pub use common_block::CommonBlock;
 pub use face_info::FaceInfo;
 pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
-    EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
-    SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
+    EEInterference, EEInterferenceKind, EFInterference, FFInterference, InterferenceTable,
+    MergedVertex, SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
     TrimmingEdgeProvenance, TrimmingLoop, TrimmingTopologyKey, VEInterference, VFInterference,
     VVInterference,
 };
@@ -903,6 +903,7 @@ mod tests {
             edge2: EdgeId(1),
             t_a: 0.25,
             t_b: 0.75,
+            kind: EEInterferenceKind::VertexHit,
         };
 
         ds.push_ee_interference(interference);
@@ -1206,6 +1207,22 @@ mod tests {
             ds.common_blocks()[common_block_id.0 as usize].faces,
             vec![FaceId(7), FaceId(8)]
         );
+    }
+
+    #[test]
+    fn stores_overlap_ee_interference_records() {
+        let mut ds = BopDs::new();
+        let interference = EEInterference {
+            edge1: EdgeId(0),
+            edge2: EdgeId(1),
+            t_a: 0.0,
+            t_b: 0.5,
+            kind: EEInterferenceKind::OverlapHit,
+        };
+
+        ds.push_ee_interference(interference);
+
+        assert_eq!(ds.ee_interferences(), &[interference]);
     }
 
     #[test]

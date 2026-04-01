@@ -59,7 +59,9 @@ impl TrimmingEdgeProvenance {
     ) -> TrimmingTopologyKey {
         match self {
             Self::SourceBoundary { edge } => TrimmingTopologyKey::SourceBoundary(edge),
-            Self::SectionCurve { section_curve } => TrimmingTopologyKey::SectionCurve(section_curve),
+            Self::SectionCurve { section_curve } => {
+                TrimmingTopologyKey::SectionCurve(section_curve)
+            }
             Self::Generated => TrimmingTopologyKey::Generated {
                 face,
                 loop_index,
@@ -243,6 +245,15 @@ pub struct VFInterference {
     pub parameters: (f64, f64),
 }
 
+/// Semantic kind of an edge-edge interference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EEInterferenceKind {
+    /// The edges meet at a single shared vertex.
+    VertexHit,
+    /// The edges overlap along a shared segment.
+    OverlapHit,
+}
+
 /// Edge-edge interference
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EEInterference {
@@ -254,6 +265,8 @@ pub struct EEInterference {
     pub t_a: f64,
     /// Parameter on the second edge curve
     pub t_b: f64,
+    /// Distinguishes point contacts from shared overlap facts.
+    pub kind: EEInterferenceKind,
 }
 
 /// Edge-face interference
@@ -453,11 +466,36 @@ mod tests {
             edge2: EdgeId(2),
             t_a: 0.25,
             t_b: 0.75,
+            kind: EEInterferenceKind::VertexHit,
         };
 
         table.push_ee(interference);
 
         assert_eq!(table.ee(), &[interference]);
+    }
+
+    #[test]
+    fn stores_ee_interference_semantics() {
+        let mut table = InterferenceTable::default();
+        let vertex = EEInterference {
+            edge1: EdgeId(1),
+            edge2: EdgeId(2),
+            t_a: 0.25,
+            t_b: 0.75,
+            kind: EEInterferenceKind::VertexHit,
+        };
+        let overlap = EEInterference {
+            edge1: EdgeId(1),
+            edge2: EdgeId(2),
+            t_a: 0.0,
+            t_b: 0.5,
+            kind: EEInterferenceKind::OverlapHit,
+        };
+
+        table.push_ee(vertex);
+        table.push_ee(overlap);
+
+        assert_eq!(table.ee(), &[vertex, overlap]);
     }
 
     #[test]
