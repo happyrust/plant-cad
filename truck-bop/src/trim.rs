@@ -1107,32 +1107,23 @@ fn compare_point3(lhs: Point3, rhs: Point3) -> std::cmp::Ordering {
 
 fn cyclic_edge_sequence_matches(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
     expected.len() == actual.len()
-        && (cyclically_aligned(expected, actual)
-            || cyclically_aligned_reversed(expected, actual))
+        && (cyclically_aligned(expected, actual, false)
+            || cyclically_aligned(expected, actual, true))
 }
 
-fn cyclically_aligned(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
-    if expected.is_empty() {
-        return true;
-    }
-
-    (0..actual.len()).any(|offset| {
-        expected
-            .iter()
-            .enumerate()
-            .all(|(index, edge_id)| *edge_id == actual[(index + offset) % actual.len()])
-    })
-}
-
-fn cyclically_aligned_reversed(expected: &[EdgeId], actual: &[EdgeId]) -> bool {
+fn cyclically_aligned(expected: &[EdgeId], actual: &[EdgeId], reversed: bool) -> bool {
     if expected.is_empty() {
         return true;
     }
 
     (0..actual.len()).any(|offset| {
         expected.iter().enumerate().all(|(index, edge_id)| {
-            let reverse_index = (actual.len() + offset - (index % actual.len())) % actual.len();
-            *edge_id == actual[reverse_index]
+            let actual_index = if reversed {
+                (actual.len() + offset - index) % actual.len()
+            } else {
+                (index + offset) % actual.len()
+            };
+            *edge_id == actual[actual_index]
         })
     })
 }
@@ -1899,6 +1890,83 @@ mod tests {
         assert!(left_sources
             .iter()
             .any(|edge_id| right_sources.contains(edge_id)));
+    }
+
+    #[test]
+    fn cyclic_edge_sequence_matches_reversed_cycles_without_allocating() {
+        let expected = [EdgeId(1), EdgeId(2), EdgeId(3), EdgeId(4)];
+        let reversed_rotation = [EdgeId(3), EdgeId(2), EdgeId(1), EdgeId(4)];
+
+        assert!(cyclic_edge_sequence_matches(&expected, &reversed_rotation));
+        assert!(cyclic_edge_sequence_matches(&[], &[]));
+        assert!(!cyclic_edge_sequence_matches(
+            &expected,
+            &[EdgeId(2), EdgeId(4), EdgeId(1), EdgeId(3)],
+        ));
+    }
+
+    #[test]
+    fn canonical_rebuilt_edge_ids_keep_generated_edges_local_to_each_face() {
+        let left = SplitFace {
+            original_face: FaceId(10),
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: FaceId(10),
+                vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
+                edges: vec![
+                    line_edge(None, Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    line_edge(None, Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)),
+                    line_edge(None, Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)),
+                    line_edge(None, Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)),
+                ],
+                uv_points: square_loop(0.0, 1.0),
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+        let right = SplitFace {
+            original_face: FaceId(11),
+            operand_rank: 0,
+            trimming_loops: vec![TrimmingLoop {
+                face: FaceId(11),
+                vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
+                edges: vec![
+                    source_edge(EdgeId(70), Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                    source_edge(EdgeId(71), Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)),
+                    source_edge(EdgeId(72), Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)),
+                    source_edge(EdgeId(73), Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)),
+                ],
+                uv_points: square_loop(0.0, 1.0),
+                signed_area: -1.0,
+                is_outer: true,
+            }],
+            splitting_edges: vec![],
+            representative_point: None,
+            classification: Some(PointClassification::OnBoundary),
+        };
+
+        let left_topology = rebuilt_face_topology(&left);
+        let right_topology = rebuilt_face_topology(&right);
+
+        assert!(left_topology.shared_edges.is_empty());
+        assert_eq!(left_topology.boundary_edges.len(), 4);
+        assert!(left_topology.boundary_edges.iter().all(|edge| match edge {
+            CanonicalRebuiltEdge::OpenBoundary(face, ..) => *face == FaceId(10),
+            _ => false,
+        }));
+        assert_eq!(
+            right_topology.shared_edges,
+            vec![
+                CanonicalRebuiltEdge::Source(crate::TrimmingTopologyKey::SourceBoundary(EdgeId(70))),
+                CanonicalRebuiltEdge::Source(crate::TrimmingTopologyKey::SourceBoundary(EdgeId(71))),
+                CanonicalRebuiltEdge::Source(crate::TrimmingTopologyKey::SourceBoundary(EdgeId(72))),
+                CanonicalRebuiltEdge::Source(crate::TrimmingTopologyKey::SourceBoundary(EdgeId(73))),
+            ]
+        );
+        assert!(right_topology.boundary_edges.is_empty());
     }
 
     #[test]
@@ -4445,6 +4513,13 @@ mod tests {
             provenance: section_curve
                 .map(|section_curve| crate::TrimmingEdgeProvenance::SectionCurve { section_curve })
                 .unwrap_or(crate::TrimmingEdgeProvenance::Generated),
+            uv_points: vec![start, end],
+        }
+    }
+
+    fn source_edge(edge: EdgeId, start: Point2, end: Point2) -> TrimmingEdge {
+        TrimmingEdge {
+            provenance: crate::TrimmingEdgeProvenance::SourceBoundary { edge },
             uv_points: vec![start, end],
         }
     }
