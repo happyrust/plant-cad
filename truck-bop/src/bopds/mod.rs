@@ -167,9 +167,7 @@ impl BopDs {
 
     /// Updates the face-state record, creating it if absent.
     pub fn update_face_info<F>(&mut self, face_id: FaceId, f: F)
-    where
-        F: FnOnce(&mut FaceInfo),
-    {
+    where F: FnOnce(&mut FaceInfo) {
         let info = self.ensure_face_info(face_id);
         f(info);
     }
@@ -220,6 +218,13 @@ impl BopDs {
     /// Borrows a common block by its identifier.
     pub fn common_block(&self, common_block_id: CommonBlockId) -> Option<&CommonBlock> {
         self.common_blocks.get(common_block_id.0 as usize)
+    }
+
+    /// Iterates all common blocks that contain the given face.
+    pub fn common_blocks_for_face(&self, face_id: FaceId) -> impl Iterator<Item = &CommonBlock> {
+        self.common_blocks
+            .iter()
+            .filter(move |common_block| common_block.contains_face(face_id))
     }
 
     /// Stores a common block and returns its identifier.
