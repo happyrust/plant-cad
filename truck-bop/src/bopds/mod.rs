@@ -165,6 +165,22 @@ impl BopDs {
         self.face_infos.entry(face_id).or_default()
     }
 
+    /// Updates the face-state record, creating it if absent.
+    pub fn update_face_info<F>(&mut self, face_id: FaceId, f: F)
+    where
+        F: FnOnce(&mut FaceInfo),
+    {
+        let info = self.ensure_face_info(face_id);
+        f(info);
+    }
+
+    /// Marks face-state as consumed in snapshot mode and returns its version.
+    pub fn mark_face_info_snapshot(&mut self, face_id: FaceId) -> Option<u64> {
+        let info = self.face_infos.get_mut(&face_id)?;
+        info.mark_clean();
+        Some(info.version)
+    }
+
     /// Registers a boundary vertex into the face-state pools.
     pub fn push_face_on_vertex(&mut self, face_id: FaceId, vertex_id: VertexId) -> bool {
         self.ensure_face_info(face_id).push_on_vertex(vertex_id)
@@ -1329,6 +1345,26 @@ mod tests {
             .expect("face info should be created on demand");
         assert_eq!(info.sc_pave_blocks, vec![PaveBlockId(99)]);
         assert_eq!(info.on_vertices, vec![VertexId(55)]);
+    }
+
+    #[test]
+    fn bopds_mark_face_info_snapshot_returns_version_and_clears_dirty() {
+        let mut ds = BopDs::new();
+        let face = FaceId(42);
+
+        ds.update_face_info(face, |info| {
+            info.push_sc_vertex(VertexId(7));
+            assert!(info.touched());
+        });
+        assert_eq!(ds.mark_face_info_snapshot(face), Some(1));
+        assert!(!ds.face_info(face).expect("face info exists").touched());
+        assert_eq!(ds.mark_face_info_snapshot(face), Some(1));
+    }
+
+    #[test]
+    fn bopds_mark_face_info_snapshot_no_record_returns_none() {
+        let mut ds = BopDs::new();
+        assert_eq!(ds.mark_face_info_snapshot(FaceId(88)), None);
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {
