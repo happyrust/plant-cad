@@ -88,6 +88,10 @@ dependencies = ["clean", "cpu-test"]
 [tasks.ci-cpu-nightly-test]
 dependencies = ["clean", "cpu-nightly-test"]
 
+[tasks.ci-cpu-test-with-bool-doc-check]
+description = "Run bool-doc regression command consistency check + CPU test suite"
+dependencies = ["clean", "bool-doc-regressions-check", "cpu-test"]
+
 [tasks.ci-gpu-test]
 dependencies = ["clean", "gpu-test", "collect-gpu-artifacts"]
 
@@ -139,3 +143,10 @@ dependencies = ["wasm-build", "webgl-build", "js-test"]
 
 [tasks.page-build]
 dependencies = ["adhoc-viewer", "build-wgpu-examples"]
+
+[tasks.bool-doc-regressions-check]
+description = "Verify cargo test command references in bool migration execution checklist are still resolvable"
+script_runner = "@shell"
+script = [
+    "./scripts/verify-bool-doc-regressions.sh docs/plans/2026-04-02-occt-bool-migration-execution-checklist.md",
+]

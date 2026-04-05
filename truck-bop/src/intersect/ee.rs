@@ -225,10 +225,34 @@ fn register_overlap_fact(
     edge_ranges: ((f64, f64), (f64, f64)),
     parametric_tol: f64,
 ) -> bool {
-    let pave_a_start = overlap_pave(bopds, edge_a_id, overlap.t_a.0, edge_ranges.0, parametric_tol);
-    let pave_a_end = overlap_pave(bopds, edge_a_id, overlap.t_a.1, edge_ranges.0, parametric_tol);
-    let pave_b_start = overlap_pave(bopds, edge_b_id, overlap.t_b.0, edge_ranges.1, parametric_tol);
-    let pave_b_end = overlap_pave(bopds, edge_b_id, overlap.t_b.1, edge_ranges.1, parametric_tol);
+    let pave_a_start = overlap_pave(
+        bopds,
+        edge_a_id,
+        overlap.t_a.0,
+        edge_ranges.0,
+        parametric_tol,
+    );
+    let pave_a_end = overlap_pave(
+        bopds,
+        edge_a_id,
+        overlap.t_a.1,
+        edge_ranges.0,
+        parametric_tol,
+    );
+    let pave_b_start = overlap_pave(
+        bopds,
+        edge_b_id,
+        overlap.t_b.0,
+        edge_ranges.1,
+        parametric_tol,
+    );
+    let pave_b_end = overlap_pave(
+        bopds,
+        edge_b_id,
+        overlap.t_b.1,
+        edge_ranges.1,
+        parametric_tol,
+    );
 
     for pave in [pave_a_start, pave_a_end] {
         append_or_push_split_pave(bopds, edge_a_id, pave, edge_ranges.0);
@@ -240,20 +264,14 @@ fn register_overlap_fact(
     bopds.split_pave_blocks_for_edge(edge_a_id);
     bopds.split_pave_blocks_for_edge(edge_b_id);
 
-    let Some(block_a) = bopds.find_pave_block_by_range(
-        edge_a_id,
-        overlap.t_a.0,
-        overlap.t_a.1,
-        parametric_tol,
-    ) else {
+    let Some(block_a) =
+        bopds.find_pave_block_by_range(edge_a_id, overlap.t_a.0, overlap.t_a.1, parametric_tol)
+    else {
         return false;
     };
-    let Some(block_b) = bopds.find_pave_block_by_range(
-        edge_b_id,
-        overlap.t_b.0,
-        overlap.t_b.1,
-        parametric_tol,
-    ) else {
+    let Some(block_b) =
+        bopds.find_pave_block_by_range(edge_b_id, overlap.t_b.0, overlap.t_b.1, parametric_tol)
+    else {
         return false;
     };
 
@@ -327,15 +345,12 @@ fn existing_vertex_for_parameter(
 }
 
 fn edge_parameter_range<C>(edge: &Edge<Point3, C>) -> (f64, f64)
-where
-    C: Clone
+where C: Clone
         + ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
         + BoundedCurve
-        + Invertible,
-{
+        + Invertible {
     edge.oriented_curve().range_tuple()
 }
-
 
 fn edge_by_id<C>(edges: &[(EdgeId, Edge<Point3, C>)], edge_id: EdgeId) -> Option<&Edge<Point3, C>> {
     edges
@@ -506,7 +521,12 @@ fn ordered_pair(lhs: f64, rhs: f64) -> (f64, f64) {
     }
 }
 
-fn point_to_parameter(value: f64, range_start: f64, range_end: f64, parameter_range: (f64, f64)) -> f64 {
+fn point_to_parameter(
+    value: f64,
+    range_start: f64,
+    range_end: f64,
+    parameter_range: (f64, f64),
+) -> f64 {
     let span = range_end - range_start;
     if span.abs() <= f64::EPSILON {
         parameter_range.0
@@ -617,7 +637,8 @@ mod tests {
         });
         let edge_a = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
         let edge_b = line_edge(Point3::new(0.5, -0.5, 0.0), Point3::new(0.5, 0.5, 0.0));
-        bopds.rebuild_paves_for_edges(&[(EdgeId(10), edge_a.clone()), (EdgeId(11), edge_b.clone())]);
+        bopds
+            .rebuild_paves_for_edges(&[(EdgeId(10), edge_a.clone()), (EdgeId(11), edge_b.clone())]);
 
         let count = intersect_ee_into_bopds(
             &mut bopds,
@@ -627,16 +648,21 @@ mod tests {
 
         assert_eq!(count, 1);
         assert_eq!(bopds.ee_interferences().len(), 1);
-        assert_eq!(bopds.ee_interferences()[0].kind, EEInterferenceKind::VertexHit);
         assert_eq!(
-            bopds.pave_blocks_for_edge(EdgeId(10))
+            bopds.ee_interferences()[0].kind,
+            EEInterferenceKind::VertexHit
+        );
+        assert_eq!(
+            bopds
+                .pave_blocks_for_edge(EdgeId(10))
                 .iter()
                 .map(|block| block.param_range)
                 .collect::<Vec<_>>(),
             vec![(0.0, 0.5), (0.5, 1.0)]
         );
         assert_eq!(
-            bopds.pave_blocks_for_edge(EdgeId(11))
+            bopds
+                .pave_blocks_for_edge(EdgeId(11))
                 .iter()
                 .map(|block| block.param_range)
                 .collect::<Vec<_>>(),
@@ -653,7 +679,8 @@ mod tests {
         });
         let edge_a = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
         let edge_b = line_edge(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 1.0, 0.0));
-        bopds.rebuild_paves_for_edges(&[(EdgeId(12), edge_a.clone()), (EdgeId(13), edge_b.clone())]);
+        bopds
+            .rebuild_paves_for_edges(&[(EdgeId(12), edge_a.clone()), (EdgeId(13), edge_b.clone())]);
 
         let count = intersect_ee_into_bopds(
             &mut bopds,
@@ -662,7 +689,10 @@ mod tests {
         );
 
         assert_eq!(count, 1);
-        assert_eq!(bopds.ee_interferences()[0].kind, EEInterferenceKind::VertexHit);
+        assert_eq!(
+            bopds.ee_interferences()[0].kind,
+            EEInterferenceKind::VertexHit
+        );
         assert_eq!(bopds.pave_blocks_for_edge(EdgeId(12)).len(), 1);
         assert_eq!(bopds.pave_blocks_for_edge(EdgeId(13)).len(), 1);
     }
@@ -676,7 +706,8 @@ mod tests {
         });
         let edge_a = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
         let edge_b = line_edge(Point3::new(0.25, 0.0, 0.0), Point3::new(0.75, 0.0, 0.0));
-        bopds.rebuild_paves_for_edges(&[(EdgeId(20), edge_a.clone()), (EdgeId(21), edge_b.clone())]);
+        bopds
+            .rebuild_paves_for_edges(&[(EdgeId(20), edge_a.clone()), (EdgeId(21), edge_b.clone())]);
 
         let count = intersect_ee_into_bopds(
             &mut bopds,
@@ -694,19 +725,18 @@ mod tests {
         let common_block = &bopds.common_blocks()[0];
         assert_eq!(common_block.pave_blocks.len(), 2);
         assert_ne!(common_block.pave_blocks[0], common_block.pave_blocks[1]);
-        assert!(common_block
-            .pave_blocks
-            .iter()
-            .all(|id| id.0 != 0));
+        assert!(common_block.pave_blocks.iter().all(|id| id.0 != 0));
         assert_eq!(
-            bopds.pave_blocks_for_edge(EdgeId(20))
+            bopds
+                .pave_blocks_for_edge(EdgeId(20))
                 .iter()
                 .map(|block| block.param_range)
                 .collect::<Vec<_>>(),
             vec![(0.0, 0.25), (0.25, 0.75), (0.75, 1.0)]
         );
         assert_eq!(
-            bopds.pave_blocks_for_edge(EdgeId(21))
+            bopds
+                .pave_blocks_for_edge(EdgeId(21))
                 .iter()
                 .map(|block| block.param_range)
                 .collect::<Vec<_>>(),

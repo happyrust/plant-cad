@@ -29,3 +29,10 @@ truck-bop follows OCCT's BOPAlgo_PaveFiller and BOPDS_DS architecture:
 - **Classification**: Ray casting for point-in-solid
 - **Topology Rebuild**: Vertex merging, edge sewing, shell assembly
 - **Topology rebuild invariant**: downstream shell reconstruction must operate on fragment-level trimming data, not just `SplitFace.original_face`, because multiple selected fragments can originate from one source face after splitting.
+- **Trim provenance refactors**: represent edge provenance and topology identity explicitly in the data model. Prefer enums/key types over scattered `Option` combinations and lossy identity coercion.
+
+## BOPDS Migration Notes
+
+- Treat `PaveBlock` as the lifecycle owner for edge split facts once Batch 2+ migration work starts. `ext_paves` or equivalent mission-specific split facts should stay attached to the block-aware flow rather than leaking into independent side tables.
+- VE, EE, and EF migration work should route through `BopDs` APIs that can preserve ordering, deduplication, and identity invariants. Avoid stage-specific shortcuts that write only raw paves and skip the block lifecycle.
+- Overlap semantics deserve first-class representation. If a contact is a shared segment, model it as paired split facts or CommonBlock-ready structure rather than degrading it into several unrelated vertex hits.

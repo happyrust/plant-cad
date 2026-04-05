@@ -687,3 +687,460 @@ The trim provenance refactor mission intentionally stopped short of the broader 
 ### Scope boundary
 
 Future pave-filler work may build on this identity model, but it should not weaken the explicit provenance contract or collapse topology keys back into inferred `Option` combinations.
+
+---
+
+## 13. 方案 A 详细实施计划（Detailed Plan）
+
+这一节把“方案 A：语义对齐优先，最小侵入接管”进一步细化到**可按会话执行、可按提交拆分、可逐批回归**的粒度。
+
+### 13.1 总体执行原则
+
+#### 原则 1：先固化数据层，再接算法层
+
+不要先写 `section()/common()/cut()/fuse()` 外部 API；应先把以下内部事实层补齐：
+
+- `FaceInfo(On / In / Sc)`
+- `CommonBlock`
+- `PaveBlock` 生命周期
+- `EE / EF / FF` 的可落库 interference 语义
+- `PaveFiller` 调度器
+
+#### 原则 2：每一批只解决一类语义
+
+不要把 `VE/EE/EF/FF` 一次打包实现。推荐每一批只解决一类“输入 -> DS -> 下游消费”的闭环。
+
+#### 原则 3：每一批必须遵循红灯 -> 实现 -> 全量最小回归
+
+每个批次的最小节奏都应是：
+
+1. 先补 failing / characterization test；
+2. 再写最小实现；
+3. 再跑该批次的 focused tests；
+4. 最后跑一轮 `trim.rs` 的保护性回归。
+
+#### 原则 4：优先保持 `trim.rs` 作为后段事实消费者不破
+
+短期目标不是重写 `trim.rs`，而是让它逐步消费更完整的 DS 事实。
+
+---
+
+### 13.2 建议拆分为 8 个提交批次
+
+#### Batch 1：DS 骨架升级
+
+**目标：** 先把占位型 `BopDs` 变成真实事实源。
+
+**文件：**
+- Modify: `truck-bop/src/bopds/face_info.rs`
+- Modify: `truck-bop/src/bopds/common_block.rs`
+- Modify: `truck-bop/src/bopds/interference.rs`
+- Modify: `truck-bop/src/bopds/mod.rs`
+
+**建议改动：**
+- `FaceInfo` 从两字段升级为六字段：
+  - `on_vertices`
+  - `in_vertices`
+  - `sc_vertices`
+  - `on_pave_blocks`
+  - `in_pave_blocks`
+  - `sc_pave_blocks`
+- 为 `FaceInfo` 增加最小 API：
+  - `push_on_vertex(...)`
+  - `push_in_vertex(...)`
+  - `push_sc_vertex(...)`
+  - `push_on_pave_block(...)`
+  - `push_in_pave_block(...)`
+  - `push_sc_pave_block(...)`
+- `CommonBlock` 从单 `pave_block` 升级为：
+  - `pave_blocks: Vec<PaveBlockId>`
+  - `faces: Vec<FaceId>`
+  - `representative_edge: Option<EdgeId>` 或等价 canonical 语义
+- 在 `BopDs` 中增加：
+  - `face_infos: FxHashMap<FaceId, FaceInfo>`
+  - `common_blocks: Vec<CommonBlock>`
+  - `pave_block_to_common_block: FxHashMap<PaveBlockId, CommonBlockId>`
+  - `interference_pairs: FxHashMap<(ShapeId, ShapeId), usize>` 或等价去重表
+- 保持旧接口尽量不删，只新增更强语义接口。
+
+**测试：**
+- `face_info_tracks_on_in_sc_separately`
+- `face_info_deduplicates_repeated_block_registration`
+- `common_block_can_group_multiple_pave_blocks`
+- `bopds_can_bind_pave_block_to_common_block`
+- `bopds_can_store_interference_pair_index`
+
+**验收标准：**
+- `BopDs` 能为任意 face 惰性创建 `FaceInfo`
+- `CommonBlock` 不再局限单 block
+- 不破坏现有 `BopDs` 测试
+
+**建议提交消息：**
+- `feat: extend bopds face and common block state`
+
+---
+
+#### Batch 2：`PaveBlock` 生命周期重构
+
+**目标：** 把 `PaveBlock` 从静态段升级成“可追加 ext paves 并再次 split”的切分单元。
+
+**文件：**
+- Modify: `truck-bop/src/bopds/pave_block.rs`
+- Modify: `truck-bop/src/bopds/mod.rs`
+
+**建议改动：**
+- 在 `PaveBlock` 中增加：
+  - `ext_paves: Vec<Pave>`
+  - `result_edge: Option<EdgeId>`
+- `BopDs` 新增最小 API：
+  - `append_ext_pave(block_id, pave)`
+  - `split_pave_blocks_for_edge(edge_id)`
+  - `rebuild_pave_blocks_from_paves(edge_id)`
+- `append_ext_pave` 不直接生成新 edge，只负责把点挂到 block 上。
+- `split_pave_blocks_for_edge` 负责：
+  1. 取原始 block；
+  2. 合并 start/end + ext paves；
+  3. 排序去重；
+  4. 生成新的子 blocks；
+  5. 保留 `unsplittable` 语义。
+
+**测试：**
+- `split_pave_blocks_inserts_extra_paves_in_sorted_order`
+- `split_pave_blocks_deduplicates_close_extra_paves`
+- `split_pave_blocks_creates_n_minus_one_blocks_after_extra_paves`
+- `unsplittable_micro_segment_is_preserved_but_not_split_again`
+
+**验收标准：**
+- 旧的 endpoint pave 逻辑继续成立
+- `ext_paves` 能稳定进入排序链路
+- `rebuild_pave_blocks_for_edge` 与 `split_pave_blocks_for_edge` 语义分工清楚
+
+**建议提交消息：**
+- `feat: add splittable pave block lifecycle`
+
+---
+
+#### Batch 3：VE 接入 block-split 闭环
+
+**目标：** 让 `VE` 成为第一类真正走完整闭环的 interference。
+
+**文件：**
+- Modify: `truck-bop/src/intersect/ve.rs`
+- Modify: `truck-bop/src/bopds/mod.rs`
+
+**建议改动：**
+- `intersect_ve(...)` 保留求交逻辑，但落库方式改为：
+  1. push `VEInterference`
+  2. 找到命中的 `PaveBlockId`
+  3. 若命中 endpoint，则复用已有 pave
+  4. 若命中内部参数，则 `append_ext_pave`
+  5. 调用 `split_pave_blocks_for_edge(edge_id)`
+- 不要再把 `VE` 当作只写 `paves` 的孤立事件。
+
+**测试：**
+- `ve_intersection_appends_extra_pave_into_matching_block`
+- `ve_intersection_splits_edge_after_extra_pave_is_added`
+- `ve_intersection_does_not_duplicate_existing_endpoint_pave`
+- `ve_intersection_respects_parametric_tolerance_when_matching_block`
+
+**验收标准：**
+- `VE` 结果能稳定反映到 `pave_blocks_for_edge()`
+- endpoint touch 不产生重复 split
+
+**建议提交消息：**
+- `feat: route ve intersections through pave block splitting`
+
+---
+
+#### Batch 4：EE 升级为 vertex-hit / overlap-hit
+
+**目标：** 把 `EE` 从纯参数对返回值升级为能表达共享顶点与共享段的 DS 事实。
+
+**文件：**
+- Modify: `truck-bop/src/bopds/interference.rs`
+- Modify: `truck-bop/src/intersect/ee.rs`
+- Modify: `truck-bop/src/bopds/mod.rs`
+
+**建议改动：**
+- 将 `EEInterference` 改为枚举或等价结构：
+  - `VertexHit { edge1, edge2, t_a, t_b, vertex }`
+  - `OverlapHit { edge1, edge2, range_a, range_b }`
+- 对 `VertexHit`：
+  - 两边各自追加 ext pave
+  - 两边都 split
+- 对 `OverlapHit`：
+  - 生成两侧成对的 `PaveBlock`
+  - 把这对 blocks 归入 `CommonBlock`
+- 让 `EE` 成为 `trim` 未来 shared boundary 的真正上游事实源。
+
+**测试：**
+- `ee_perpendicular_segments_create_shared_vertex_and_split_both_edges`
+- `ee_endpoint_touch_reuses_existing_vertices_without_duplicate_split`
+- `ee_colinear_overlap_creates_common_block_not_single_vertex_only`
+- `ee_overlap_registers_faces_only_when_consumed_by_face_relations`
+
+**验收标准：**
+- 单点交和重合段两类语义分开表达
+- 共线 overlap 不退化为多个离散顶点
+
+**建议提交消息：**
+- `feat: promote ee intersections to shared vertex and overlap facts`
+
+---
+
+#### Batch 5：EF 接入 `FaceInfo`
+
+**目标：** 把 `EF` 从局部相交提升到面状态事实层。
+
+**文件：**
+- Modify: `truck-bop/src/bopds/interference.rs`
+- Modify: `truck-bop/src/intersect/ef.rs`
+- Modify: `truck-bop/src/bopds/mod.rs`
+
+**建议改动：**
+- 扩展 `EFInterference` 语义：
+  - `PointHit`
+  - `OverlapHit`
+- `PointHit`：
+  - 写 edge parameter pave
+  - 更新 `FaceInfo.on_vertices` 或 `FaceInfo.in_vertices`
+- `OverlapHit`：
+  - 将 edge 对应 block 写入 `FaceInfo.on_pave_blocks`
+  - 需要时建立 `CommonBlock`
+- 先不追求所有复杂 surface case，优先让 plane + line / circle 的主路径跑通。
+
+**测试：**
+- `ef_point_intersection_updates_face_on_or_in_state`
+- `ef_intersection_adds_edge_parameter_pave_for_split`
+- `ef_edge_on_face_boundary_is_promoted_to_common_block`
+- `ef_reuses_existing_pave_block_when_overlap_matches_boundary_range`
+
+**验收标准：**
+- `FaceInfo` 的 `On/In` 状态第一次被真实使用
+- `EF` 不再只是孤立的参数事件
+
+**建议提交消息：**
+- `feat: connect ef intersections to face state and pave blocks`
+
+---
+
+#### Batch 6：FF 升级为 section-edge blocks
+
+**目标：** 把 `FF` 的 `SectionCurve` 变成 trimming / section 可直接消费的 section-edge block 来源。
+
+**文件：**
+- Modify: `truck-bop/src/intersect/ff.rs`
+- Modify: `truck-bop/src/bopds/interference.rs`
+- Modify: `truck-bop/src/bopds/mod.rs`
+- Modify: `truck-bop/src/trim.rs`
+
+**建议改动：**
+- 保留 `SectionCurve` 现有字段，但增加：
+  - curve-local `paves`
+  - curve-local block 构建辅助逻辑
+- 把 `EF` 产生的 vertex、端点 vertex、closed-loop sampling vertex 投到 section curve 上
+- 由 curve 上相邻 paves 生成 section-edge blocks
+- 将这些 blocks 同时登记到两个 face 的 `FaceInfo.sc_pave_blocks`
+- `build_trimming_loops()` 优先消费 `sc_pave_blocks`，必要时再回退到原 section polyline。
+
+**测试：**
+- `ff_section_curve_projects_ef_vertices_into_curve_paves`
+- `ff_section_edge_is_registered_in_both_faces_sc_pool`
+- `ff_open_section_preserves_distinct_start_end_vertices`
+- `ff_closed_loop_section_enables_trimming_loop_construction`
+
+**验收标准：**
+- `FF` 结果第一次与 `trim.rs` 真正闭环
+- 两个 owning faces 的 `sc` 事实保持一致
+
+**建议提交消息：**
+- `feat: convert ff section curves into section-edge block facts`
+
+---
+
+#### Batch 7：新增统一 `PaveFiller`
+
+**目标：** 引入统一前置调度器，但先不改 public API 语义，只让内部主链跑通。
+
+**文件：**
+- Add: `truck-bop/src/pave_filler.rs`
+- Modify: `truck-bop/src/lib.rs`
+- Modify: `truck-bop/src/pipeline.rs`
+
+**建议改动：**
+- 新建 `PaveFiller` 或 `PaveFillerReport` 风格接口，最小包含：
+  - `prepare_sources(...)`
+  - `run_vv(...)`（可先空实现）
+  - `run_ve(...)`
+  - `run_ee(...)`
+  - `run_vf(...)`
+  - `run_ef(...)`
+  - `run_ff(...)`
+  - `split_pave_blocks(...)`
+  - `make_split_edges(...)`
+  - `build_trimming_loops(...)`
+  - `build_split_faces(...)`
+- `PipelineReport` 可升级为真正携带：
+  - interferences count
+  - split edge count
+  - trimming loop count
+  - split face count
+- `PaveFiller` 先服务内部调用，不急于做复杂对外 API。
+
+**测试：**
+- `section_pipeline_runs_ve_ee_ef_ff_and_builds_split_edges`
+- `pave_filler_report_counts_generated_section_curves_and_split_faces`
+- `pave_filler_is_idempotent_for_repeated_runs_on_same_inputs`
+
+**验收标准：**
+- `VE/EE/EF/FF` 不再由外部调用方手工拼接
+- `trim.rs` 能从统一前置流水线消费输入
+
+**建议提交消息：**
+- `feat: add unified pave filler orchestration pipeline`
+
+---
+
+#### Batch 8：按 `section -> common -> cut -> fuse` 接通 public API
+
+**目标：** 在内部链路已经稳定后，再逐个接 public API。
+
+**文件：**
+- Modify: `truck-bop/src/lib.rs`
+- Modify: `truck-bop/src/pipeline.rs`
+- Modify: `truck-bop/src/trim.rs`
+
+**建议改动：**
+- `section()`：
+  - 优先返回 FF/EF/EE 驱动的 section shell 或等价边集合装配结果
+- `common()`：
+  - 先复用 `build_split_faces + classify_split_faces_against_operand + select_split_faces_for_boolean_op`
+- `cut()`：
+  - 在 `common()` 稳定后接入
+- `fuse()`：
+  - 最后接入，重点关注 shared topology 复用与闭壳校验
+
+**测试：**
+- `section_two_boxes_returns_non_empty_shell`
+- `common_two_overlapping_boxes_returns_closed_solid`
+- `cut_box_minus_box_returns_closed_solid_with_expected_component_count`
+- `fuse_two_touching_boxes_reuses_shared_topology_without_open_shell`
+
+**验收标准：**
+- 四个外部 API 不再返回 `NotImplemented`
+- 至少 cuboid / plane-face 主路径能稳定通过
+
+**建议提交消息：**
+- `feat: wire public boolean apis through pave filler pipeline`
+
+---
+
+### 13.3 每批的最小验证命令
+
+#### Batch 1-2
+
+```bash
+cargo test -p truck-bop bopds::tests -- --nocapture
+cargo test -p truck-bop pave_block -- --nocapture
+cargo check -p truck-bop
+```
+
+#### Batch 3-6
+
+```bash
+cargo test -p truck-bop intersect::ve -- --nocapture
+cargo test -p truck-bop intersect::ee -- --nocapture
+cargo test -p truck-bop intersect::ef -- --nocapture
+cargo test -p truck-bop intersect::ff -- --nocapture
+cargo test -p truck-bop trim::tests::boundary_loops_preserve_original_edge_provenance -- --exact
+cargo test -p truck-bop trim::tests::shell_assembly_groups_faces_by_shared_topology_components -- --exact
+```
+
+#### Batch 7-8
+
+```bash
+cargo test -p truck-bop trim::tests -- --nocapture
+cargo test -p truck-bop pipeline::tests -- --nocapture
+cargo test -p truck-bop
+cargo check -p truck-bop
+cargo check --release -p truck-bop
+```
+
+---
+
+### 13.4 建议的会话安排
+
+#### 会话 1：只做 Batch 1
+
+输出目标：
+- `FaceInfo / CommonBlock / BopDs` 结构升级
+- DS 级测试绿灯
+
+#### 会话 2：只做 Batch 2
+
+输出目标：
+- `PaveBlock` 生命周期跑通
+- split block 测试绿灯
+
+#### 会话 3：Batch 3 + Batch 4
+
+输出目标：
+- `VE / EE` 首次打通边级切分闭环
+
+#### 会话 4：Batch 5 + Batch 6
+
+输出目标：
+- `EF / FF` 首次打通面级状态与 section-edge 闭环
+
+#### 会话 5：Batch 7
+
+输出目标：
+- 统一 `PaveFiller` 主链成型
+
+#### 会话 6：Batch 8 + 全量回归
+
+输出目标：
+- public API 首次可用
+- 全量 `cargo test/check/check --release` 绿灯
+
+---
+
+### 13.5 必须保持的边界
+
+#### 边界 1：不要破坏现有 provenance 合同
+
+`TrimmingEdgeProvenance` / `TrimmingTopologyKey` 是当前 trim 主线已经收敛好的事实模型；新 pave-filler 工作应该建立在它之上，而不是绕过它另造一套隐式 identity。
+
+#### 边界 2：不要让 `FF` 直接短路 `trim.rs`
+
+即使 `FF` 先能生成 section polyline，也应尽快收敛到：
+
+- `SectionCurve`
+- `curve paves`
+- `section-edge blocks`
+- `FaceInfo.sc_pave_blocks`
+
+而不是长期维持“FF 直接喂一根 polyline 给 trim”的双轨模型。
+
+#### 边界 3：不要在 Batch 1-4 过早改 public API
+
+否则会把“数据层稳定性问题”伪装成“布尔 API 语义问题”，增加排障成本。
+
+---
+
+### 13.6 建议的实施起点
+
+如果下一轮就开始干实现，我建议**从 Batch 1 开始，不跳步**。
+
+最小起手顺序：
+
+1. 改 `FaceInfo`
+2. 改 `CommonBlock`
+3. 改 `BopDs` 持有结构
+4. 先补 DS 级测试
+5. 全绿后再进入 `PaveBlock`
+
+原因很明确：
+
+> 方案 A 的成功关键，不在于先做出一个能跑的 `section()`，而在于先把“交叉事实如何在仓库里表达”这件事定稳。
+

@@ -1,7 +1,7 @@
 //! Interference structures
 
 use crate::{EdgeId, FaceId, PointClassification, SectionCurveId, VertexId};
-use truck_base::cgmath64::Point2;
+use truck_base::cgmath64::{Point2, Point3};
 
 /// A merged vertex cluster built from selected fragments.
 #[derive(Debug, Clone, PartialEq)]
@@ -11,7 +11,7 @@ pub struct MergedVertex {
     /// Source vertices absorbed into this merged vertex.
     pub original_vertices: Vec<VertexId>,
     /// Canonical merged location in model space.
-    pub point: truck_base::cgmath64::Point3,
+    pub point: Point3,
 }
 
 /// Shared topology identity used across trimming, sewing, and rebuild.
@@ -181,7 +181,7 @@ pub struct SplitFace {
     /// Section curves that contributed split boundaries to this fragment.
     pub splitting_edges: Vec<SectionCurveId>,
     /// Representative point used for classification against the opposite operand.
-    pub representative_point: Option<truck_base::cgmath64::Point3>,
+    pub representative_point: Option<Point3>,
     /// Classification state against the opposite operand.
     pub classification: Option<PointClassification>,
 }
@@ -280,6 +280,10 @@ pub struct EFInterference {
     pub parameter: f64,
     /// Parameters on face surface
     pub surface_parameters: (f64, f64),
+    /// Model-space sample point for the interference.
+    pub face_projection_sample: Option<Point3>,
+    /// Whether UV projection was explicitly available for this interference.
+    pub face_projection_available: bool,
 }
 
 /// Face-face interference
@@ -305,7 +309,7 @@ pub struct SectionCurve {
     /// Second endpoint on the section, if open.
     pub end: VertexId,
     /// Polyline samples describing the section in model space.
-    pub samples: Vec<truck_base::cgmath64::Point3>,
+    pub samples: Vec<Point3>,
     /// Polyline samples of the section projected into each source face's parameter space.
     pub face_parameters: [(FaceId, Vec<Point2>); 2],
     /// Whether UV projection succeeded for each source face.
@@ -506,6 +510,8 @@ mod tests {
             face: FaceId(2),
             parameter: 0.25,
             surface_parameters: (0.25, 0.75),
+            face_projection_sample: Some(Point3::new(0.0, 0.0, 0.0)),
+            face_projection_available: true,
         };
 
         table.push_ef(interference);
@@ -521,7 +527,7 @@ mod tests {
             faces: (FaceId(1), FaceId(2)),
             start: VertexId(4),
             end: VertexId(5),
-            samples: vec![truck_base::cgmath64::Point3::new(0.0, 0.0, 0.0)],
+            samples: vec![Point3::new(0.0, 0.0, 0.0)],
             face_parameters: [
                 (FaceId(1), vec![Point2::new(0.0, 0.0)]),
                 (FaceId(2), vec![Point2::new(1.0, 1.0)]),
@@ -592,7 +598,7 @@ mod tests {
             operand_rank: 0,
             trimming_loops: vec![loop_record],
             splitting_edges: vec![SectionCurveId(2)],
-            representative_point: Some(truck_base::cgmath64::Point3::new(0.5, 0.5, 0.0)),
+            representative_point: Some(Point3::new(0.5, 0.5, 0.0)),
             classification: Some(PointClassification::Inside),
         };
 
@@ -607,7 +613,7 @@ mod tests {
         let merged = MergedVertex {
             id: VertexId(9),
             original_vertices: vec![VertexId(9), VertexId(11)],
-            point: truck_base::cgmath64::Point3::new(1.0, 2.0, 3.0),
+            point: Point3::new(1.0, 2.0, 3.0),
         };
 
         table.push_merged_vertex(merged.clone());

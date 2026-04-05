@@ -64,25 +64,36 @@ where
     let options = bopds.options();
     let vertex_bboxes = vertices
         .iter()
-        .filter(|(id, _)| {
-            bopds
-                .vertex_shape_info(*id)
-                .is_some_and(is_registered_vertex)
+        .filter_map(|(id, vertex)| {
+            let info = bopds.vertex_shape_info(*id)?;
+            if !is_registered_vertex(info) {
+                return None;
+            }
+            Some((*id, info.operand_rank, vertex.bounding_box(options)))
         })
-        .map(|(id, vertex)| (*id, vertex.bounding_box(options)))
         .collect::<Vec<_>>();
     let edge_bboxes = edges
         .iter()
-        .filter(|(id, _)| bopds.edge_shape_info(*id).is_some_and(is_registered_edge))
-        .map(|(id, edge)| (*id, edge.bounding_box(options)))
+        .filter_map(|(id, edge)| {
+            let info = bopds.edge_shape_info(*id)?;
+            if !is_registered_edge(info) {
+                return None;
+            }
+            Some((*id, info.operand_rank, edge.bounding_box(options)))
+        })
         .collect::<Vec<_>>();
     let face_bboxes = faces
         .iter()
-        .filter(|(id, _)| bopds.face_shape_info(*id).is_some_and(is_registered_face))
-        .map(|(id, face)| (*id, face.bounding_box(options)))
+        .filter_map(|(id, face)| {
+            let info = bopds.face_shape_info(*id)?;
+            if !is_registered_face(info) {
+                return None;
+            }
+            Some((*id, info.operand_rank, face.bounding_box(options)))
+        })
         .collect::<Vec<_>>();
 
-    collect_candidate_pairs(&vertex_bboxes, &edge_bboxes, &face_bboxes)
+    collect_candidate_pairs_across_operands(&vertex_bboxes, &edge_bboxes, &face_bboxes)
 }
 
 fn collect_candidate_pairs(
@@ -136,6 +147,65 @@ fn collect_candidate_pairs(
             let (lhs_id, lhs_bbox) = face_bboxes[i];
             let (rhs_id, rhs_bbox) = face_bboxes[j];
             if bbox_overlaps(lhs_bbox, rhs_bbox) {
+                candidates.ff.push((lhs_id, rhs_id));
+            }
+        }
+    }
+
+    candidates
+}
+
+fn collect_candidate_pairs_across_operands(
+    vertex_bboxes: &[(VertexId, u8, truck_base::bounding_box::BoundingBox<Point3>)],
+    edge_bboxes: &[(EdgeId, u8, truck_base::bounding_box::BoundingBox<Point3>)],
+    face_bboxes: &[(FaceId, u8, truck_base::bounding_box::BoundingBox<Point3>)],
+) -> CandidatePairs {
+    let mut candidates = CandidatePairs::default();
+
+    for i in 0..vertex_bboxes.len() {
+        for j in (i + 1)..vertex_bboxes.len() {
+            let (lhs_id, lhs_rank, lhs_bbox) = vertex_bboxes[i];
+            let (rhs_id, rhs_rank, rhs_bbox) = vertex_bboxes[j];
+            if lhs_rank != rhs_rank && bbox_overlaps(lhs_bbox, rhs_bbox) {
+                candidates.vv.push((lhs_id, rhs_id));
+            }
+        }
+    }
+
+    for &(vertex_id, vertex_rank, vertex_bbox) in vertex_bboxes {
+        for &(edge_id, edge_rank, edge_bbox) in edge_bboxes {
+            if vertex_rank != edge_rank && bbox_overlaps(vertex_bbox, edge_bbox) {
+                candidates.ve.push((vertex_id, edge_id));
+            }
+        }
+        for &(face_id, face_rank, face_bbox) in face_bboxes {
+            if vertex_rank != face_rank && bbox_overlaps(vertex_bbox, face_bbox) {
+                candidates.vf.push((vertex_id, face_id));
+            }
+        }
+    }
+
+    for i in 0..edge_bboxes.len() {
+        for j in (i + 1)..edge_bboxes.len() {
+            let (lhs_id, lhs_rank, lhs_bbox) = edge_bboxes[i];
+            let (rhs_id, rhs_rank, rhs_bbox) = edge_bboxes[j];
+            if lhs_rank != rhs_rank && bbox_overlaps(lhs_bbox, rhs_bbox) {
+                candidates.ee.push((lhs_id, rhs_id));
+            }
+        }
+        let (edge_id, edge_rank, edge_bbox) = edge_bboxes[i];
+        for &(face_id, face_rank, face_bbox) in face_bboxes {
+            if edge_rank != face_rank && bbox_overlaps(edge_bbox, face_bbox) {
+                candidates.ef.push((edge_id, face_id));
+            }
+        }
+    }
+
+    for i in 0..face_bboxes.len() {
+        for j in (i + 1)..face_bboxes.len() {
+            let (lhs_id, lhs_rank, lhs_bbox) = face_bboxes[i];
+            let (rhs_id, rhs_rank, rhs_bbox) = face_bboxes[j];
+            if lhs_rank != rhs_rank && bbox_overlaps(lhs_bbox, rhs_bbox) {
                 candidates.ff.push((lhs_id, rhs_id));
             }
         }
@@ -328,17 +398,68 @@ mod tests {
         );
 
         assert_eq!(candidates.vv, vec![(vertex_a_id, vertex_b_id)]);
-        assert_eq!(
-            candidates.ve,
-            vec![(vertex_a_id, edge_id), (vertex_b_id, edge_id)]
-        );
-        assert_eq!(
-            candidates.vf,
-            vec![(vertex_a_id, face_id), (vertex_b_id, face_id)]
-        );
+        assert_eq!(candidates.ve, vec![(vertex_b_id, edge_id)]);
+        assert_eq!(candidates.vf, vec![(vertex_a_id, face_id)]);
         assert!(candidates.ee.is_empty());
         assert_eq!(candidates.ef, vec![(edge_id, face_id)]);
         assert!(candidates.ff.is_empty());
+    }
+
+    #[test]
+    fn broad_phase_bopds_only_keeps_cross_operand_pairs() {
+        let options = BopOptions {
+            geometric_tol: 0.05,
+            ..BopOptions::default()
+        };
+        let mut bopds = BopDs::with_options(options);
+        let vertex_lhs = bopds.register_vertex_source(0);
+        let vertex_rhs = bopds.register_vertex_source(1);
+        let edge_lhs = bopds.register_edge_source(0);
+        let edge_rhs = bopds.register_edge_source(1);
+        let face_lhs = bopds.register_face_source(0);
+        let face_rhs = bopds.register_face_source(1);
+
+        let overlapping_edge_vertices =
+            builder::vertices([Point3::new(-0.5, 0.0, 0.0), Point3::new(0.5, 0.0, 0.0)]);
+        let overlapping_edge: Edge<Point3, truck_modeling::Curve> =
+            builder::line(&overlapping_edge_vertices[0], &overlapping_edge_vertices[1]);
+        let overlapping_face = triangle_face(
+            Point3::new(-0.5, -0.5, 0.0),
+            Point3::new(0.5, -0.5, 0.0),
+            Point3::new(0.0, 0.5, 0.0),
+        );
+
+        let candidates = generate_candidate_pairs_from_bopds(
+            &bopds,
+            &[
+                (vertex_lhs, Vertex::new(Point3::new(0.0, 0.0, 0.0))),
+                (vertex_rhs, Vertex::new(Point3::new(0.01, 0.0, 0.0))),
+            ],
+            &[
+                (edge_lhs, overlapping_edge.clone()),
+                (edge_rhs, overlapping_edge.clone()),
+            ],
+            &[
+                (face_lhs, overlapping_face.clone()),
+                (face_rhs, overlapping_face.clone()),
+            ],
+        );
+
+        assert_eq!(candidates.vv, vec![(vertex_lhs, vertex_rhs)]);
+        assert_eq!(
+            candidates.ve,
+            vec![(vertex_lhs, edge_rhs), (vertex_rhs, edge_lhs)]
+        );
+        assert_eq!(
+            candidates.vf,
+            vec![(vertex_lhs, face_rhs), (vertex_rhs, face_lhs)]
+        );
+        assert_eq!(candidates.ee, vec![(edge_lhs, edge_rhs)]);
+        assert_eq!(
+            candidates.ef,
+            vec![(edge_lhs, face_rhs), (edge_rhs, face_lhs)]
+        );
+        assert_eq!(candidates.ff, vec![(face_lhs, face_rhs)]);
     }
 
     fn triangle_face(a: Point3, b: Point3, c: Point3) -> Face<Point3, truck_modeling::Curve, ()> {

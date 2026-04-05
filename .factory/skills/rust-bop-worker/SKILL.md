@@ -16,6 +16,7 @@ Use this worker for truck-bop features involving:
 - Face splitting algorithms
 - Classification and selection logic
 - Topology rebuild operations
+- Mission-scoped BOPDS migration work that must preserve trim provenance and endpoint identity
 
 ## Work Procedure
 
@@ -31,6 +32,11 @@ Before any implementation:
 - Run tests to confirm they fail: `cargo test -p truck-bop <test_name> -- --exact`
 - Document what each test verifies in test names and comments
 
+Exception:
+- If the feature is explicitly a migration, regression-alignment, or documentation-hardening task and strong focused coverage already exists, you may use the existing failing test/regression as the RED anchor instead of adding a brand-new test. State that choice explicitly in the handoff.
+- If the assigned feature is already red on startup for the exact targeted behavior, treat that regression as the RED anchor first and repair the baseline before layering on broader follow-up changes.
+- Revert exploratory edits before handoff when they do not improve an already-red regression anchor, and document the investigated root-cause surfaces so the next worker can restart cleanly.
+
 ### 3. Implement Minimally (GREEN)
 
 Write the minimal code to make tests pass:
@@ -40,12 +46,19 @@ Write the minimal code to make tests pass:
 - Keep implementations focused and minimal
 - Run tests frequently: `cargo test -p truck-bop <test_name>`
 
+Mission-specific expectations for BOPDS migration work:
+- Treat `PaveBlock` as the authoritative split unit once the mission introduces block-aware APIs.
+- Do not bypass block routing by writing only raw global paves when the feature requires VE/EE/EF to feed `BopDs`.
+- Preserve `BopDs::next_generated_vertex_id()` endpoint identity and the existing trim provenance/topology-key invariants.
+- Do not claim a feature complete if mission-critical data is still represented by placeholders (for example fake `CommonBlock` membership or sentinel block IDs); return to the orchestrator with the blocker instead.
+- After integrating EF or other face-state flows, re-run the pre-existing targeted regressions for endpoint-only or tangent contacts before claiming success.
+
 ### 4. Verify with Validators
 
 After tests pass:
 - Run `cargo check -p truck-bop` (must pass)
-- Run `cargo test -p truck-bop` (all tests must pass)
-- Run `cargo clippy -p truck-bop` (address warnings)
+- Run `cargo test -p truck-bop` when the feature or milestone contract requires crate-wide confirmation; otherwise follow the narrower command plan in AGENTS.md and `.factory/services.yaml`
+- Run `cargo clippy -p truck-bop` only if the current feature explicitly requires clippy or the repository guidance says linting is in scope. Otherwise follow `.factory/services.yaml`.
 
 ### 5. Manual Verification
 
@@ -110,4 +123,10 @@ Return to orchestrator if:
 - Requirements are ambiguous or contradictory
 - Geometric algorithm needs research or external reference
 - Tests reveal fundamental design issues
+- The best available implementation still relies on placeholder mission-critical data or leaves the new path effectively dead code
 - Cannot achieve expected behavior within reasonable scope
+
+## Environment Notes
+
+- `.factory/init.sh` is a shell script. Run it with `sh` or execute it directly; do not invoke it with `python3`.
+- Prefer the repo-local commands from `.factory/services.yaml` when they differ from the generic guidance above.

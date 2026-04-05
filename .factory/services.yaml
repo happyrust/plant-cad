@@ -2,7 +2,8 @@ commands:
   install: cargo build -p truck-bop
   test: cargo test -p truck-bop
   check: cargo check -p truck-bop
-  lint: echo "Skipping clippy due to known pre-existing issues in other workspace crates"
+  lint: echo "No dedicated lint gate for this mission; prefer focused cargo tests plus cargo check and cargo check --release"
   typecheck: cargo check -p truck-bop
+  release_check: cargo check --release -p truck-bop
 
 services: {}

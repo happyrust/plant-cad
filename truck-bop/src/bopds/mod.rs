@@ -14,9 +14,9 @@ pub use face_info::FaceInfo;
 pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
     EEInterference, EEInterferenceKind, EFInterference, FFInterference, InterferenceTable,
-    MergedVertex, SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
-    TrimmingEdgeProvenance, TrimmingLoop, TrimmingTopologyKey, VEInterference, VFInterference,
-    VVInterference,
+    MergedVertex, SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace,
+    TrimmingEdge, TrimmingEdgeProvenance, TrimmingLoop, TrimmingTopologyKey, VEInterference,
+    VFInterference, VVInterference,
 };
 pub use pave::Pave;
 pub use pave_block::PaveBlock;
@@ -182,17 +182,20 @@ impl BopDs {
 
     /// Registers a boundary pave block into the face-state pools.
     pub fn push_face_on_pave_block(&mut self, face_id: FaceId, pave_block_id: PaveBlockId) -> bool {
-        self.ensure_face_info(face_id).push_on_pave_block(pave_block_id)
+        self.ensure_face_info(face_id)
+            .push_on_pave_block(pave_block_id)
     }
 
     /// Registers an interior pave block into the face-state pools.
     pub fn push_face_in_pave_block(&mut self, face_id: FaceId, pave_block_id: PaveBlockId) -> bool {
-        self.ensure_face_info(face_id).push_in_pave_block(pave_block_id)
+        self.ensure_face_info(face_id)
+            .push_in_pave_block(pave_block_id)
     }
 
     /// Registers a section pave block into the face-state pools.
     pub fn push_face_sc_pave_block(&mut self, face_id: FaceId, pave_block_id: PaveBlockId) -> bool {
-        self.ensure_face_info(face_id).push_sc_pave_block(pave_block_id)
+        self.ensure_face_info(face_id)
+            .push_sc_pave_block(pave_block_id)
     }
 
     /// Borrows all common blocks stored in the data structure.
@@ -557,7 +560,6 @@ impl BopDs {
         self.paves.retain(|pave| pave.edge != edge_id);
         self.paves.extend(normalized);
     }
-
 }
 
 fn canonical_shape_pair(lhs: ShapeId, rhs: ShapeId) -> (ShapeId, ShapeId) {
@@ -993,6 +995,8 @@ mod tests {
             face: FaceId(1),
             parameter: 0.5,
             surface_parameters: (0.5, 0.25),
+            face_projection_sample: Some(Point3::new(0.0, 0.0, 0.0)),
+            face_projection_available: true,
         };
 
         ds.push_ef_interference(interference);

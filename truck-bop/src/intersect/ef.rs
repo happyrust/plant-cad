@@ -58,7 +58,16 @@ where
             };
             if surface.subs(uv.0, uv.1).distance2(point) <= tolerance_sq
                 && point_projects_inside_face(face, uv, tolerance)
-                && push_unique_intersection(bopds, edge_id, face_id, start, uv, tolerance)
+                && push_unique_intersection(
+                    bopds,
+                    edge_id,
+                    face_id,
+                    start,
+                    uv,
+                    Some(point),
+                    tolerance,
+                    true,
+                )
             {
                 count += 1;
             }
@@ -66,14 +75,21 @@ where
         }
         let mut local_count = 0;
 
-        for (parameter, uv) in sampled_hits {
+        for (parameter, uv, face_projection_available) in sampled_hits {
+            let point = curve.subs(parameter);
             if push_unique_intersection(
                 bopds,
                 edge_id,
                 face_id,
                 edge_parameter_hint(parameter, start, end),
                 uv,
+                if face_projection_available {
+                    Some(point)
+                } else {
+                    None
+                },
                 tolerance,
+                face_projection_available,
             ) {
                 count += 1;
                 local_count += 1;
@@ -83,14 +99,17 @@ where
         if local_count == 0 {
             let fallback_hits =
                 detect_fallback_hits(&curve, surface, face, start, end, tolerance, tolerance_sq);
-            for (parameter, uv) in fallback_hits {
+            for (parameter, uv, _) in fallback_hits {
+                let point = curve.subs(parameter);
                 if push_unique_intersection(
                     bopds,
                     edge_id,
                     face_id,
                     edge_parameter_hint(parameter, start, end),
                     uv,
+                    Some(point),
                     tolerance,
+                    true,
                 ) {
                     count += 1;
                 }
@@ -108,7 +127,7 @@ fn detect_sampled_hits<C, S>(
     start: f64,
     end: f64,
     tolerance: f64,
-) -> Vec<(f64, (f64, f64))>
+) -> Vec<(f64, (f64, f64), bool)>
 where
     C: ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>,
     S: ParametricSurface<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
@@ -137,7 +156,7 @@ where
             continue;
         };
         if *distance_sq <= tolerance_sq && *inside {
-            push_unique_sampled_hit(&mut hits, *parameter, *uv, tolerance);
+            push_unique_sampled_hit(&mut hits, *parameter, *uv, true, tolerance);
         }
     }
 
@@ -190,7 +209,7 @@ where
             continue;
         }
 
-        push_unique_sampled_hit(&mut hits, parameter, uv, tolerance);
+        push_unique_sampled_hit(&mut hits, parameter, uv, false, tolerance);
     }
 
     hits
@@ -204,7 +223,7 @@ fn detect_fallback_hits<C, S>(
     end: f64,
     tolerance: f64,
     tolerance_sq: f64,
-) -> Vec<(f64, (f64, f64))>
+) -> Vec<(f64, (f64, f64), bool)>
 where
     C: ParametricCurve<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>,
     S: ParametricSurface<Point = Point3, Vector = <Point3 as EuclideanSpace>::Diff>
@@ -223,25 +242,26 @@ where
         if !point_projects_inside_face(face, uv, tolerance) {
             continue;
         }
-        push_unique_sampled_hit(&mut hits, parameter, uv, tolerance);
+        push_unique_sampled_hit(&mut hits, parameter, uv, true, tolerance);
     }
     hits
 }
 
 fn push_unique_sampled_hit(
-    hits: &mut Vec<(f64, (f64, f64))>,
+    hits: &mut Vec<(f64, (f64, f64), bool)>,
     parameter: f64,
     surface_parameters: (f64, f64),
+    _face_projection_available: bool,
     tolerance: f64,
 ) {
-    if hits.iter().any(|(existing_parameter, existing_uv)| {
+    if hits.iter().any(|(existing_parameter, existing_uv, _)| {
         (*existing_parameter - parameter).abs() <= tolerance
             && (existing_uv.0 - surface_parameters.0).abs() <= tolerance
             && (existing_uv.1 - surface_parameters.1).abs() <= tolerance
     }) {
         return;
     }
-    hits.push((parameter, surface_parameters));
+    hits.push((parameter, surface_parameters, _face_projection_available));
 }
 
 fn edge_by_id<C>(edges: &[(EdgeId, Edge<Point3, C>)], edge_id: EdgeId) -> Option<&Edge<Point3, C>> {
@@ -268,7 +288,6 @@ fn sample_parameters(range: (f64, f64), division: usize) -> Vec<f64> {
         .map(|index| start + step * index as f64)
         .collect()
 }
-
 
 fn project_point<C, S>(
     surface: &S,
@@ -299,7 +318,9 @@ fn push_unique_intersection(
     face_id: FaceId,
     parameter: f64,
     surface_parameters: (f64, f64),
+    face_projection_sample: Option<Point3>,
     tolerance: f64,
+    face_projection_available: bool,
 ) -> bool {
     if bopds.ef_interferences().iter().any(|existing| {
         existing.edge == edge_id
@@ -326,6 +347,8 @@ fn push_unique_intersection(
         face: face_id,
         parameter,
         surface_parameters,
+        face_projection_sample,
+        face_projection_available,
     });
     bind_face_info_from_edge_face_fact(
         bopds,
@@ -367,11 +390,7 @@ fn register_edge_face_fact(
     Some((pave_block_id, vertex_id))
 }
 
-fn ensure_edge_endpoint_paves(
-    bopds: &mut BopDs,
-    edge_id: EdgeId,
-    tolerance: f64,
-) {
+fn ensure_edge_endpoint_paves(bopds: &mut BopDs, edge_id: EdgeId, tolerance: f64) {
     let edge_paves = bopds.paves_for_edge(edge_id);
     if edge_paves.len() >= 2 {
         return;
@@ -379,12 +398,20 @@ fn ensure_edge_endpoint_paves(
 
     let start_vertex = bopds.next_generated_vertex_id();
     let end_vertex = bopds.next_generated_vertex_id();
-    if edge_paves.is_empty() || !edge_paves.iter().any(|pave| (pave.parameter - 0.0).abs() <= tolerance) {
+    if edge_paves.is_empty()
+        || !edge_paves
+            .iter()
+            .any(|pave| (pave.parameter - 0.0).abs() <= tolerance)
+    {
         if let Ok(start) = Pave::new(edge_id, start_vertex, 0.0, tolerance) {
             bopds.push_pave(start);
         }
     }
-    if edge_paves.is_empty() || !edge_paves.iter().any(|pave| (pave.parameter - 1.0).abs() <= tolerance) {
+    if edge_paves.is_empty()
+        || !edge_paves
+            .iter()
+            .any(|pave| (pave.parameter - 1.0).abs() <= tolerance)
+    {
         if let Ok(end) = Pave::new(edge_id, end_vertex, 1.0, tolerance) {
             bopds.push_pave(end);
         }
@@ -404,12 +431,7 @@ fn existing_vertex_for_parameter(
         .map(|pave| pave.vertex)
 }
 
-fn parameter_hits_endpoint(
-    bopds: &BopDs,
-    edge_id: EdgeId,
-    parameter: f64,
-    tolerance: f64,
-) -> bool {
+fn parameter_hits_endpoint(bopds: &BopDs, edge_id: EdgeId, parameter: f64, tolerance: f64) -> bool {
     let paves = bopds.paves_for_edge(edge_id);
     let Some(first) = paves.first() else {
         return false;
@@ -765,6 +787,46 @@ mod tests {
     }
 
     #[test]
+    fn ef_intersection_generates_projection_samples() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let edge = line_edge(Point3::new(0.25, 0.25, -1.0), Point3::new(0.25, 0.25, 1.0));
+        let count = intersect_ef(
+            &mut bopds,
+            &[(EdgeId(0), edge)],
+            &[(FaceId(0), unit_square_face())],
+            &[(EdgeId(0), FaceId(0))],
+        );
+
+        assert_eq!(count, 1);
+        let interference = bopds.ef_interferences()[0];
+        assert!(interference.face_projection_available);
+        assert_eq!(interference.face_projection_sample.is_some(), true);
+        let sample = interference
+            .face_projection_sample
+            .expect("projection sample must be present when available");
+        assert!((sample.x - 0.25).abs() < 1.0e-9);
+        assert!((sample.y - 0.25).abs() < 1.0e-9);
+        assert!(sample.z.abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn ef_intersection_marks_projection_unavailable_for_refined_search_hit() {
+        let mut bopds = BopDs::with_options(BopOptions::default());
+        let edge = line_edge(Point3::new(0.2, 0.2, -1.0), Point3::new(0.2, 0.2, 0.7));
+        let count = intersect_ef(
+            &mut bopds,
+            &[(EdgeId(0), edge)],
+            &[(FaceId(0), unit_square_face())],
+            &[(EdgeId(0), FaceId(0))],
+        );
+
+        assert_eq!(count, 1);
+        let interference = bopds.ef_interferences()[0];
+        assert!(!interference.face_projection_available);
+        assert!(interference.face_projection_sample.is_none());
+    }
+
+    #[test]
     fn ef_intersection_promotes_interior_point_hit_into_face_info_and_split_blocks() {
         let mut bopds = BopDs::with_options(BopOptions::default());
         let edge = line_edge(Point3::new(0.25, 0.25, -1.0), Point3::new(0.25, 0.25, 1.0));
@@ -779,7 +841,9 @@ mod tests {
 
         assert_eq!(count, 1);
         assert_eq!(bopds.pave_blocks_for_edge(EdgeId(10)).len(), 2);
-        let info = bopds.face_info(FaceId(20)).expect("face info should be stored");
+        let info = bopds
+            .face_info(FaceId(20))
+            .expect("face info should be stored");
         assert_eq!(info.on_vertices, Vec::<VertexId>::new());
         assert_eq!(info.sc_vertices, Vec::<VertexId>::new());
         assert_eq!(info.on_pave_blocks, Vec::<crate::PaveBlockId>::new());
@@ -802,7 +866,9 @@ mod tests {
         );
 
         assert_eq!(count, 1);
-        let info = bopds.face_info(FaceId(21)).expect("face info should be stored");
+        let info = bopds
+            .face_info(FaceId(21))
+            .expect("face info should be stored");
         assert_eq!(info.in_vertices, Vec::<VertexId>::new());
         assert_eq!(info.in_pave_blocks, Vec::<crate::PaveBlockId>::new());
         assert_eq!(info.on_vertices.len(), 1);

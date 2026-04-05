@@ -13,23 +13,129 @@ use truck_topology::{Face, Shell};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
 
+/// 记录单个面-面候选对处理结果的错误码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIntersectionFailure {
+    /// 找不到候选对中的某一张面。
+    MissingFace,
+    /// 面片三角化后未能取到可用面片边界。
+    MissingTriangulatedFace,
+    /// 面与面轮廓未形成可采样交线段。
+    NoIntersectionSegments,
+    /// 交线段采样失败（模型参数求交失败）。
+    SectionSamplingFailed,
+    /// 交线段长度不足以构造区间曲线。
+    DegenerateSection,
+}
+
+/// 记录面-面候选对失败的返回状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FFIntersectionFailureRecord {
+    /// 候选面对中的第一张面。
+    pub face1: FaceId,
+    /// 候选面对中的第二张面。
+    pub face2: FaceId,
+    /// 失败原因。
+    pub reason: FFIntersectionFailure,
+}
+
+/// 面-面求交执行结果：成功曲线条目数 + 失败状态明细。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FFIntersectionReport {
+    /// 成功构建的 section curve 数量（原 `intersect_ff` 返回值）。
+    pub success: usize,
+    /// 候选失败记录。每对候选面最多记录一条失败状态。
+    pub failures: Vec<FFIntersectionFailureRecord>,
+}
+
+impl FFIntersectionReport {
+    fn push_failure(&mut self, face1: FaceId, face2: FaceId, reason: FFIntersectionFailure) {
+        self.failures.push(FFIntersectionFailureRecord {
+            face1,
+            face2,
+            reason,
+        })
+    }
+
+    /// 失败数量。
+    pub fn failure_count(&self) -> usize { self.failures.len() }
+
+    /// 失败原因聚合计数，便于上层统计/埋点。
+    pub fn failure_summary(&self) -> FFIntersectionFailureSummary {
+        let mut summary = FFIntersectionFailureSummary::default();
+        for failure in &self.failures {
+            match failure.reason {
+                FFIntersectionFailure::MissingFace => summary.missing_face += 1,
+                FFIntersectionFailure::MissingTriangulatedFace => {
+                    summary.missing_triangulated_face += 1
+                }
+                FFIntersectionFailure::NoIntersectionSegments => {
+                    summary.no_intersection_segments += 1
+                }
+                FFIntersectionFailure::SectionSamplingFailed => {
+                    summary.section_sampling_failed += 1
+                }
+                FFIntersectionFailure::DegenerateSection => summary.degenerate_section += 1,
+            }
+        }
+        summary
+    }
+}
+
+/// 面-面求交失败原因聚合计数（仅用于上层观测与日志）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FFIntersectionFailureSummary {
+    /// 缺少候选面对象。
+    pub missing_face: usize,
+    /// 三角化后未获取到可用面片边界。
+    pub missing_triangulated_face: usize,
+    /// 未检测到交线段（含平行或离散不重叠）。
+    pub no_intersection_segments: usize,
+    /// 交线段参数求交失败。
+    pub section_sampling_failed: usize,
+    /// 交线段退化，无法构造有效区间。
+    pub degenerate_section: usize,
+}
+
+impl FFIntersectionFailureSummary {
+    /// 失败总数。
+    pub fn total_failures(&self) -> usize {
+        self.missing_face
+            + self.missing_triangulated_face
+            + self.no_intersection_segments
+            + self.section_sampling_failed
+            + self.degenerate_section
+    }
+}
+
+impl Default for FFIntersectionReport {
+    fn default() -> Self {
+        Self {
+            success: 0,
+            failures: Vec::new(),
+        }
+    }
+}
+
 /// Detects face-face interferences and stores generated section curves in `BopDs`.
 pub fn intersect_ff(
     bopds: &mut BopDs,
     faces: &[(FaceId, Face<Point3, Curve, Surface>)],
     candidates: &[(FaceId, FaceId)],
-) -> usize {
+) -> FFIntersectionReport {
     let tolerance = bopds
         .options()
         .geometric_tol
         .max(bopds.options().approximation_tol);
-    let mut count = 0;
+    let mut report = FFIntersectionReport::default();
 
     for &(face1_id, face2_id) in candidates {
         let Some(face1) = face_by_id(faces, face1_id) else {
+            report.push_failure(face1_id, face2_id, FFIntersectionFailure::MissingFace);
             continue;
         };
         let Some(face2) = face_by_id(faces, face2_id) else {
+            report.push_failure(face1_id, face2_id, FFIntersectionFailure::MissingFace);
             continue;
         };
 
@@ -38,26 +144,60 @@ pub fn intersect_ff(
         let poly1 = shell1.robust_triangulation(tolerance);
         let poly2 = shell2.robust_triangulation(tolerance);
         let Some(poly_face1) = poly1.face_iter().next() else {
+            report.push_failure(
+                face1_id,
+                face2_id,
+                FFIntersectionFailure::MissingTriangulatedFace,
+            );
             continue;
         };
         let Some(poly_face2) = poly2.face_iter().next() else {
+            report.push_failure(
+                face1_id,
+                face2_id,
+                FFIntersectionFailure::MissingTriangulatedFace,
+            );
             continue;
         };
         let Some(polygon1) = poly_face1.surface() else {
+            report.push_failure(
+                face1_id,
+                face2_id,
+                FFIntersectionFailure::MissingTriangulatedFace,
+            );
             continue;
         };
         let Some(polygon2) = poly_face2.surface() else {
+            report.push_failure(
+                face1_id,
+                face2_id,
+                FFIntersectionFailure::MissingTriangulatedFace,
+            );
             continue;
         };
 
         let surface1 = face1.oriented_surface();
         let surface2 = face2.oriented_surface();
         let segments = polygon1.extract_interference(&polygon2);
+        if segments.is_empty() {
+            report.push_failure(
+                face1_id,
+                face2_id,
+                FFIntersectionFailure::NoIntersectionSegments,
+            );
+            continue;
+        }
         let polylines = construct_polylines(&segments);
         let Some(curves) = build_section_samples(&surface1, &surface2, polylines) else {
+            report.push_failure(
+                face1_id,
+                face2_id,
+                FFIntersectionFailure::SectionSamplingFailed,
+            );
             continue;
         };
 
+        let mut success_on_candidate = false;
         for samples in curves {
             if samples.len() < 2 {
                 continue;
@@ -107,11 +247,16 @@ pub fn intersect_ff(
                 face2: face2_id,
                 section_curve: section_curve_id,
             });
-            count += 1;
+            report.success += 1;
+            success_on_candidate = true;
+        }
+
+        if !success_on_candidate {
+            report.push_failure(face1_id, face2_id, FFIntersectionFailure::DegenerateSection);
         }
     }
 
-    count
+    report
 }
 
 fn project_section_to_face(
@@ -417,9 +562,9 @@ mod tests {
         let mut bopds = BopDs::new();
         let faces = vec![(FaceId(0), yz_square_face()), (FaceId(1), xy_square_face())];
 
-        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
 
-        assert_eq!(count, 1);
+        assert_eq!(report.success, 1);
         assert_eq!(bopds.ff_interferences().len(), 1);
         assert_eq!(bopds.section_curves().len(), 1);
         let section = &bopds.section_curves()[0];
@@ -452,6 +597,22 @@ mod tests {
     }
 
     #[test]
+    fn ff_interference_links_section_curve() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), yz_square_face()), (FaceId(1), xy_square_face())];
+
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(report.success, 1);
+        let section = &bopds.section_curves()[0];
+        let ff = &bopds.ff_interferences()[0];
+
+        assert_eq!(ff.face1, FaceId(0));
+        assert_eq!(ff.face2, FaceId(1));
+        assert_eq!(ff.section_curve, section.id);
+    }
+
+    #[test]
     #[ignore] // Known limitation: open-curve UV orientation on inverted faces
     fn section_projection_respects_inverted_face_orientation() {
         let mut bopds = BopDs::new();
@@ -459,9 +620,9 @@ mod tests {
         inverted.invert();
         let faces = vec![(FaceId(0), inverted), (FaceId(1), xy_square_face())];
 
-        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
 
-        assert_eq!(count, 1);
+        assert_eq!(report.success, 1);
         let section = &bopds.section_curves()[0];
         let yz_parameters = &section.face_parameters[0].1;
         assert!(section.face_projection_available[0].1);
@@ -522,6 +683,26 @@ mod tests {
     }
 
     #[test]
+    fn ff_touching_surface_generates_minimal_curve() {
+        let mut bopds = BopDs::new();
+        let faces = vec![
+            (FaceId(0), yz_square_face()),
+            (FaceId(1), xy_triangle_face()),
+        ];
+
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(report.success, 1);
+        let section = &bopds.section_curves()[0];
+        assert_eq!(section.samples.len(), 2);
+        assert!(
+            (section.start == VertexId(0) && section.end == VertexId(1))
+                || (section.start == VertexId(1) && section.end == VertexId(0))
+                || section.start == section.end
+        );
+    }
+
+    #[test]
     fn ff_parallel_planes_produce_no_section_curve() {
         let mut bopds = BopDs::new();
         let faces = vec![
@@ -529,9 +710,59 @@ mod tests {
             (FaceId(1), lifted_xy_square_face(1.0)),
         ];
 
-        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
 
-        assert_eq!(count, 0);
+        assert_eq!(report.success, 0);
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(
+            report.failures[0],
+            FFIntersectionFailureRecord {
+                face1: FaceId(0),
+                face2: FaceId(1),
+                reason: FFIntersectionFailure::NoIntersectionSegments,
+            }
+        );
+        assert!(bopds.ff_interferences().is_empty());
+        assert!(bopds.section_curves().is_empty());
+    }
+
+    #[test]
+    fn ff_intersection_reports_missing_face_as_failure() {
+        let mut bopds = BopDs::new();
+        let faces = vec![(FaceId(0), yz_square_face())];
+
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(report.success, 0);
+        assert_eq!(report.failure_count(), 1);
+        assert_eq!(
+            report.failures[0],
+            FFIntersectionFailureRecord {
+                face1: FaceId(0),
+                face2: FaceId(1),
+                reason: FFIntersectionFailure::MissingFace,
+            }
+        );
+        assert!(bopds.ff_interferences().is_empty());
+        assert!(bopds.section_curves().is_empty());
+    }
+
+    #[test]
+    fn ff_intersection_distinguishes_parallel_face_no_intersection_as_no_segments() {
+        let mut bopds = BopDs::new();
+        let faces = vec![
+            (FaceId(0), yz_square_face()),
+            (FaceId(1), lifted_xy_square_face(2.0)),
+        ];
+
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+
+        assert_eq!(report.success, 0);
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(
+            report.failures[0].reason,
+            FFIntersectionFailure::NoIntersectionSegments
+        );
         assert!(bopds.ff_interferences().is_empty());
         assert!(bopds.section_curves().is_empty());
     }
@@ -542,9 +773,9 @@ mod tests {
         let mut bopds = BopDs::new();
         let faces = vec![(FaceId(0), cylinder_face()), (FaceId(1), xy_disk_face(1.0))];
 
-        let count = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
+        let report = intersect_ff(&mut bopds, &faces, &[(FaceId(0), FaceId(1))]);
 
-        assert_eq!(count, 1);
+        assert_eq!(report.success, 1);
         let section = &bopds.section_curves()[0];
         assert!(section.samples.len() >= 8);
         for point in &section.samples {
@@ -563,13 +794,13 @@ mod tests {
             (FaceId(2), xz_square_face()),
         ];
 
-        let count = intersect_ff(
+        let report = intersect_ff(
             &mut bopds,
             &faces,
             &[(FaceId(0), FaceId(1)), (FaceId(0), FaceId(2))],
         );
 
-        assert_eq!(count, 2);
+        assert_eq!(report.success, 2);
         assert_eq!(bopds.section_curves()[0].id, crate::SectionCurveId(0));
         assert_eq!(bopds.section_curves()[1].id, crate::SectionCurveId(1));
     }
@@ -598,6 +829,28 @@ mod tests {
             Point3::new(0.0, 1.0, 0.0),
             Point3::new(0.0, 1.0, 1.0),
             Point3::new(0.0, 0.0, 1.0),
+        )
+    }
+
+    fn xy_triangle_face() -> Face<Point3, Curve, Surface> {
+        let vertices = builder::vertices([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        ]);
+        let edges: Vec<Edge<Point3, Curve>> = vec![
+            builder::line(&vertices[0], &vertices[1]),
+            builder::line(&vertices[1], &vertices[2]),
+            builder::line(&vertices[2], &vertices[0]),
+        ];
+        let wire = truck_topology::Wire::from(edges);
+        Face::new(
+            vec![wire],
+            Surface::Plane(truck_modeling::Plane::new(
+                vertices[0].point(),
+                vertices[1].point(),
+                vertices[2].point(),
+            )),
         )
     }
 
