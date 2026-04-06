@@ -462,6 +462,27 @@ mod tests {
     }
 
     #[test]
+    fn pave_filler_report_split_edges_reflects_materialized_records() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge_id = EdgeId(19);
+
+        bopds.push_pave(Pave::new(edge_id, VertexId(5), 0.0, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(6), 0.5, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(7), 1.0, 1.0e-8).unwrap());
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+
+        let mut filler = PaveFiller::new();
+        let reported = filler.make_split_edges(&mut bopds);
+
+        assert_eq!(reported, 2);
+        assert_eq!(reported, bopds.split_edges().len());
+        assert_eq!(filler.report().split_edges, bopds.split_edges().len());
+    }
+
+    #[test]
     fn split_edges_count_matches_pave_blocks() {
         let mut bopds = BopDs::with_options(BopOptions {
             parametric_tol: 1.0e-8,

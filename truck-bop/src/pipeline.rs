@@ -37,9 +37,17 @@ pub enum BooleanOp {
 }
 
 /// Pipeline execution report
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct PipelineReport;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PipelineReport {
+    /// Number of final pave blocks produced by the split pipeline.
+    pub pave_blocks: usize,
+    /// Number of materialized split-edge records derived from the final pave-block partition.
+    pub split_edges: usize,
+    /// Number of trimming loops built after split-edge materialization.
+    pub trimming_loops: usize,
+    /// Number of split-face fragments built from trimming loops.
+    pub split_faces: usize,
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -252,10 +260,13 @@ where
         &candidate_pairs,
     );
 
-    filler.split_pave_blocks(&mut bopds, all_edges.iter().map(|(edge_id, _)| *edge_id));
-    filler.make_split_edges(&mut bopds);
-    filler.build_trimming_loops(&mut bopds, &all_faces);
-    filler.build_split_faces(&mut bopds);
+    let pipeline_report = PipelineReport {
+        pave_blocks: filler.split_pave_blocks(&mut bopds, all_edges.iter().map(|(edge_id, _)| *edge_id)),
+        split_edges: filler.make_split_edges(&mut bopds),
+        trimming_loops: filler.build_trimming_loops(&mut bopds, &all_faces),
+        split_faces: filler.build_split_faces(&mut bopds),
+    };
+    debug_assert_eq!(pipeline_report.split_edges, bopds.split_edges().len());
 
     let solids_by_operand = [(0_u8, lhs.clone()), (1_u8, rhs.clone())];
     classify_split_faces_against_operand(&mut bopds, &solids_by_operand)?;
@@ -272,7 +283,7 @@ where
         .iter()
         .map(|(id, face)| (*id, face.clone()))
         .collect::<FxHashMap<_, _>>();
-    let selection_summary = section_split_face_summary(&selected_split_faces);
+    let selection_summary = section_split_face_summary(&selected_split_faces, &pipeline_report);
     let shell_summary = shell_path_summary(&sewn_paths);
 
     let shells = match assemble_shells_with_diagnostic(&selected_split_faces, &all_faces_by_id) {
@@ -301,24 +312,25 @@ where
     Ok((shells, None))
 }
 
-fn section_split_face_summary(split_faces: &[SplitFace]) -> (usize, usize, usize, usize) {
+fn section_split_face_summary(
+    split_faces: &[SplitFace],
+    pipeline_report: &PipelineReport,
+) -> (usize, usize, usize, usize) {
     let selected_split_face_count = split_faces.len();
     let mut selected_faces_with_splitting_edges = 0_usize;
-    let mut total_split_edges = 0_usize;
     let mut max_split_edges_per_face = 0_usize;
 
     for split_face in split_faces {
         if !split_face.splitting_edges.is_empty() {
             selected_faces_with_splitting_edges += 1;
         }
-        total_split_edges += split_face.splitting_edges.len();
         max_split_edges_per_face = max_split_edges_per_face.max(split_face.splitting_edges.len());
     }
 
     (
         selected_split_face_count,
         selected_faces_with_splitting_edges,
-        total_split_edges,
+        pipeline_report.split_edges,
         max_split_edges_per_face,
     )
 }
@@ -823,6 +835,25 @@ mod tests {
             run_boolean_pipeline_with_diagnostics(BooleanOp::Section, &lhs, &rhs, 1.0e-6).unwrap();
         assert!(shells.is_empty());
         assert!(maybe_summary.is_none());
+    }
+
+    #[test]
+    fn pipeline_section_report_split_edge_count_matches_ds() {
+        let lhs: Solid<Point3, Curve, Surface> = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 2.0, 2.0),
+        ]));
+        let rhs: Solid<Point3, Curve, Surface> = primitive::cuboid(BoundingBox::from_iter([
+            Point3::new(1.0, 0.5, 0.0),
+            Point3::new(3.0, 1.5, 2.0),
+        ]));
+
+        let (_shells, maybe_summary) =
+            run_boolean_pipeline_with_diagnostics(BooleanOp::Section, &lhs, &rhs, 1.0e-6).unwrap();
+        let summary = maybe_summary.expect("section should record assembly failure summary");
+
+        assert!(summary.total_split_edges > 0);
+        assert!(summary.max_split_edges_per_face <= summary.total_split_edges);
     }
 
     #[test]
