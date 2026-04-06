@@ -253,7 +253,7 @@ where
     );
 
     filler.split_pave_blocks(&mut bopds, all_edges.iter().map(|(edge_id, _)| *edge_id));
-    filler.make_split_edges(&bopds);
+    filler.make_split_edges(&mut bopds);
     filler.build_trimming_loops(&mut bopds, &all_faces);
     filler.build_split_faces(&mut bopds);
 
@@ -990,7 +990,7 @@ mod tests {
             filler.split_pave_blocks(&mut bopds, all_edges.iter().map(|(id, _)| *id));
         assert!(split_blocks > 0);
         assert_eq!(filler_report.ff_failures, 0);
-        let split_edges = filler.make_split_edges(&bopds);
+        let split_edges = filler.make_split_edges(&mut bopds);
         assert!(split_edges > 0);
         let trimming_loops = filler.build_trimming_loops(&mut bopds, &all_faces);
         assert!(trimming_loops > 0);
@@ -1118,7 +1118,7 @@ result={result} notes={notes}",
         let split_blocks =
             filler.split_pave_blocks(&mut bopds, all_edges.iter().map(|(id, _)| *id));
         assert!(split_blocks > 0);
-        let split_edges = filler.make_split_edges(&bopds);
+        let split_edges = filler.make_split_edges(&mut bopds);
         assert!(split_edges > 0);
         let trimming_loops = filler.build_trimming_loops(&mut bopds, &all_faces);
         assert!(trimming_loops > 0);
@@ -1244,7 +1244,7 @@ result=pass notes=baseline_seeded",
         let split_blocks =
             filler.split_pave_blocks(&mut bopds, all_edges.iter().map(|(id, _)| *id));
         assert!(split_blocks > 0);
-        let split_edges = filler.make_split_edges(&bopds);
+        let split_edges = filler.make_split_edges(&mut bopds);
         assert!(split_edges > 0);
         let trimming_loops = filler.build_trimming_loops(&mut bopds, &all_faces);
         assert!(trimming_loops > 0);

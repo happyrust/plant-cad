@@ -211,12 +211,32 @@ impl PaveFiller {
         self.report.pave_blocks
     }
 
-    /// Builds split-edge-level intermediate results.
-    ///
-    /// In the current stage this is a placeholder counting step; the data path
-    /// is ready for later extension without changing the call boundary.
-    pub fn make_split_edges(&mut self, bopds: &BopDs) -> usize {
-        self.report.split_edges = bopds.pave_blocks().len();
+    /// Builds split-edge-level intermediate results from the settled pave-block partition.
+    pub fn make_split_edges(&mut self, bopds: &mut BopDs) -> usize {
+        bopds.clear_split_edges();
+
+        let materialized = bopds
+            .pave_blocks()
+            .iter()
+            .enumerate()
+            .map(|(index, block)| {
+                crate::SplitEdgeRecord::new(
+                    crate::SplitEdgeId(u32::MAX),
+                    block.original_edge,
+                    block.start_vertex,
+                    block.end_vertex,
+                    block.param_range,
+                    bopds.common_block_for_pave_block(crate::PaveBlockId(index as u32)),
+                    block.unsplittable,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for split_edge in materialized {
+            bopds.push_split_edge(split_edge);
+        }
+
+        self.report.split_edges = bopds.split_edges().len();
         self.report.split_edges
     }
 
@@ -244,7 +264,7 @@ impl PaveFiller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BopOptions, CandidatePairs};
+    use crate::{bopds::Pave, BopOptions, CandidatePairs};
     use truck_base::cgmath64::Point3;
     use truck_modeling::{builder, Curve, Surface};
     use truck_topology::{Edge, Face, Vertex};
@@ -267,7 +287,7 @@ mod tests {
         assert_eq!(report, BopOperationReport::default());
         assert_eq!(filler.report(), BopOperationReport::default());
         assert_eq!(filler.split_pave_blocks(&mut bopds, std::iter::empty()), 0);
-        assert_eq!(filler.make_split_edges(&bopds), 0);
+        assert_eq!(filler.make_split_edges(&mut bopds), 0);
         assert_eq!(
             filler.build_trimming_loops::<Curve, Surface>(&mut bopds, &empty_faces),
             0
@@ -394,7 +414,7 @@ mod tests {
         let split_blocks =
             filler.split_pave_blocks(&mut bopds, edges.iter().map(|(edge_id, _)| *edge_id));
         assert_eq!(split_blocks, 2);
-        let split_edges = filler.make_split_edges(&bopds);
+        let split_edges = filler.make_split_edges(&mut bopds);
         assert_eq!(split_edges, 2);
 
         let faces: Vec<(FaceId, Face<Point3, Curve, Surface>)> = Vec::new();
@@ -404,8 +424,86 @@ mod tests {
         let report = filler.report();
         assert!(report.total_interference_count() >= report.vv);
         assert_eq!(report.split_edges, 2);
+        assert_eq!(bopds.split_edges().len(), 2);
         assert_eq!(report.trimming_loops, trimming);
         assert_eq!(report.split_faces, split_faces);
+    }
+
+    #[test]
+    fn make_split_edges_materializes_one_record_per_final_pave_block() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge_id = EdgeId(10);
+
+        bopds.push_pave(Pave::new(edge_id, VertexId(1), 0.0, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(2), 0.25, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(3), 0.75, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(4), 1.0, 1.0e-8).unwrap());
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+
+        let expected_blocks = bopds.pave_blocks().to_vec();
+        assert_eq!(expected_blocks.len(), 3);
+
+        let mut filler = PaveFiller::new();
+        let split_edges = filler.make_split_edges(&mut bopds);
+
+        assert_eq!(split_edges, expected_blocks.len());
+        assert_eq!(bopds.split_edges().len(), expected_blocks.len());
+
+        for (record, block) in bopds.split_edges().iter().zip(expected_blocks.iter()) {
+            assert_eq!(record.original_edge, block.original_edge);
+            assert_eq!(record.start_vertex, block.start_vertex);
+            assert_eq!(record.end_vertex, block.end_vertex);
+            assert_eq!(record.param_range, block.param_range);
+            assert_eq!(record.unsplittable, block.unsplittable);
+        }
+    }
+
+    #[test]
+    fn split_edges_count_matches_pave_blocks() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge_id = EdgeId(20);
+
+        bopds.push_pave(Pave::new(edge_id, VertexId(5), 0.0, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(6), 0.5, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(7), 1.0, 1.0e-8).unwrap());
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+
+        let mut filler = PaveFiller::new();
+        let count = filler.make_split_edges(&mut bopds);
+
+        assert_eq!(count, bopds.pave_blocks().len());
+        assert_eq!(filler.report().split_edges, bopds.split_edges().len());
+    }
+
+    #[test]
+    fn make_split_edges_preserves_unsplittable_micro_segments() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge_id = EdgeId(30);
+
+        bopds.push_pave(Pave::new(edge_id, VertexId(8), 0.0, 1.0e-9).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(9), 5.0e-7, 1.0e-9).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(10), 1.0, 1.0e-9).unwrap());
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+
+        assert!(bopds.pave_blocks()[0].unsplittable);
+
+        let mut filler = PaveFiller::new();
+        filler.make_split_edges(&mut bopds);
+
+        let first = &bopds.split_edges()[0];
+        assert!(first.unsplittable);
+        assert_eq!(first.param_range, bopds.pave_blocks()[0].param_range);
+        assert_eq!(first.start_vertex, VertexId(8));
+        assert_eq!(first.end_vertex, VertexId(9));
     }
 
     #[test]
