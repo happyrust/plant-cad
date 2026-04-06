@@ -40,6 +40,8 @@ pub struct BopDs {
     face_infos: FxHashMap<FaceId, FaceInfo>,
     interferences: InterferenceTable,
     common_blocks: Vec<CommonBlock>,
+    common_block_generation: u64,
+    common_block_snapshot_version: u64,
     pave_block_to_common_block: FxHashMap<PaveBlockId, CommonBlockId>,
     interference_pairs: FxHashMap<(ShapeId, ShapeId), usize>,
     paves: Vec<Pave>,
@@ -60,6 +62,8 @@ impl BopDs {
             face_infos: FxHashMap::default(),
             interferences: InterferenceTable::default(),
             common_blocks: Vec::new(),
+            common_block_generation: 0,
+            common_block_snapshot_version: 0,
             pave_block_to_common_block: FxHashMap::default(),
             interference_pairs: FxHashMap::default(),
             paves: Vec::new(),
@@ -234,6 +238,7 @@ impl BopDs {
             self.pave_block_to_common_block
                 .insert(pave_block_id, common_block_id);
         }
+        self.common_block_generation += 1;
         self.common_blocks.push(common_block);
         common_block_id
     }
@@ -255,7 +260,27 @@ impl BopDs {
                 .insert(pave_block_id, common_block_id);
         }
         *slot = common_block;
+        self.common_block_generation += 1;
         true
+    }
+
+    /// Removes a common block by identifier and returns it, if present.
+    pub fn remove_common_block(&mut self, common_block_id: CommonBlockId) -> Option<CommonBlock> {
+        if self.common_blocks.len() <= common_block_id.0 as usize {
+            return None;
+        }
+
+        let removed = self.common_blocks.swap_remove(common_block_id.0 as usize);
+        self.rebuild_common_block_index();
+        self.common_block_generation += 1;
+        Some(removed)
+    }
+
+    /// Clears all common blocks and mapping state.
+    pub fn clear_common_blocks(&mut self) {
+        self.common_blocks.clear();
+        self.pave_block_to_common_block.clear();
+        self.common_block_generation += 1;
     }
 
     /// Returns the common-block identifier associated with a pave block.
@@ -298,6 +323,30 @@ impl BopDs {
         self.interference_pairs
             .get(&canonical_shape_pair(lhs, rhs))
             .copied()
+    }
+
+    /// Returns current common-block generation.
+    pub fn common_block_generation(&self) -> u64 { self.common_block_generation }
+
+    /// Snapshot marker for common-block lifecycle management.
+    pub fn mark_common_blocks_snapshot(&mut self) -> u64 {
+        self.common_block_snapshot_version = self.common_block_generation;
+        self.common_block_snapshot_version
+    }
+
+    /// Returns the last reported snapshot marker.
+    pub fn common_blocks_snapshot_version(&self) -> u64 { self.common_block_snapshot_version }
+
+    /// Removes stale index entries by rebuild on demand.
+    fn rebuild_common_block_index(&mut self) {
+        self.pave_block_to_common_block.clear();
+        for (id, block) in self.common_blocks.iter().enumerate() {
+            let block_id = CommonBlockId(id as u32);
+            for &pave_block_id in &block.pave_blocks {
+                self.pave_block_to_common_block
+                    .insert(pave_block_id, block_id);
+            }
+        }
     }
 
     /// Store a vertex-vertex interference.
@@ -1306,6 +1355,48 @@ mod tests {
             ds.common_blocks()[common_block_id.0 as usize].faces,
             vec![FaceId(7), FaceId(8)]
         );
+    }
+
+    #[test]
+    fn bopds_face_common_block_roundtrip() {
+        use super::common_block::CommonBlock;
+
+        let mut ds = BopDs::new();
+        let mut first = CommonBlock::new(vec![PaveBlockId(1)], vec![FaceId(2)], Some(EdgeId(3)));
+        first.register_witness_edge(EdgeId(7));
+        first.register_witness_face(FaceId(8));
+
+        let block_id = ds.push_common_block(first);
+        assert_eq!(ds.common_block_generation(), 1);
+        assert_eq!(ds.common_blocks_snapshot_version(), 0);
+        assert_eq!(ds.mark_common_blocks_snapshot(), 1);
+        assert_eq!(ds.common_blocks_snapshot_version(), 1);
+
+        let blocks_for_face: Vec<_> = ds.common_blocks_for_face(FaceId(2)).collect();
+        assert_eq!(blocks_for_face.len(), 1);
+        assert_eq!(blocks_for_face[0].contains_witness_edge(EdgeId(7)), true);
+        assert!(ds.common_block_for_pave_block(PaveBlockId(1)).is_some());
+
+        let removed = ds
+            .remove_common_block(block_id)
+            .expect("common block should be removed");
+        assert_eq!(removed.pave_blocks, vec![PaveBlockId(1)]);
+        assert_eq!(ds.common_block_generation(), 2);
+        assert!(ds.common_blocks().is_empty());
+        assert_eq!(ds.common_block_for_pave_block(PaveBlockId(1)), None);
+
+        ds.push_common_block(CommonBlock::new(
+            vec![PaveBlockId(9)],
+            vec![FaceId(3)],
+            Some(EdgeId(10)),
+        ));
+        assert_eq!(ds.common_block_generation(), 3);
+        assert_eq!(ds.common_blocks_for_face(FaceId(2)).count(), 0);
+
+        ds.clear_common_blocks();
+        assert_eq!(ds.common_block_generation(), 4);
+        assert!(ds.common_blocks().is_empty());
+        assert_eq!(ds.common_blocks_snapshot_version(), 1);
     }
 
     #[test]
