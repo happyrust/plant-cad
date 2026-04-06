@@ -507,6 +507,41 @@ mod tests {
     }
 
     #[test]
+    fn make_split_edges_carries_common_block_link_when_present() {
+        use crate::bopds::CommonBlock;
+
+        let mut bopds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge_id = EdgeId(40);
+
+        bopds.push_pave(Pave::new(edge_id, VertexId(20), 0.0, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(21), 0.5, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(22), 1.0, 1.0e-8).unwrap());
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+
+        let common_block_id = bopds.push_common_block(CommonBlock::new(
+            vec![crate::PaveBlockId(0)],
+            vec![FaceId(99)],
+            Some(edge_id),
+        ));
+
+        let mut filler = PaveFiller::new();
+        let split_edges = filler.make_split_edges(&mut bopds);
+
+        assert_eq!(split_edges, 2);
+        assert_eq!(bopds.split_edges()[0].common_block, Some(common_block_id));
+        assert_eq!(bopds.split_edges()[1].common_block, None);
+
+        let linked_ids: Vec<_> = bopds
+            .split_edges_for_common_block(common_block_id)
+            .map(|record| record.id)
+            .collect();
+        assert_eq!(linked_ids, vec![crate::SplitEdgeId(0)]);
+    }
+
+    #[test]
     fn pavefiller_builds_faceinfo_commonblock() {
         let mut bopds = BopDs::with_options(BopOptions {
             geometric_tol: 1.0e-6,
