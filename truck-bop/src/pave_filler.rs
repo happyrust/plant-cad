@@ -542,6 +542,31 @@ mod tests {
     }
 
     #[test]
+    fn make_split_edges_is_idempotent_across_repeated_runs() {
+        let mut bopds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-8,
+            ..BopOptions::default()
+        });
+        let edge_id = EdgeId(41);
+
+        bopds.push_pave(Pave::new(edge_id, VertexId(30), 0.0, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(31), 0.25, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(32), 0.75, 1.0e-8).unwrap());
+        bopds.push_pave(Pave::new(edge_id, VertexId(33), 1.0, 1.0e-8).unwrap());
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
+
+        let mut filler = PaveFiller::new();
+        let first_count = filler.make_split_edges(&mut bopds);
+        let first_records = bopds.split_edges().to_vec();
+        let second_count = filler.make_split_edges(&mut bopds);
+
+        assert_eq!(first_count, 3);
+        assert_eq!(first_count, second_count);
+        assert_eq!(bopds.split_edges(), first_records.as_slice());
+        assert_eq!(filler.report().split_edges, first_records.len());
+    }
+
+    #[test]
     fn pavefiller_builds_faceinfo_commonblock() {
         let mut bopds = BopDs::with_options(BopOptions {
             geometric_tol: 1.0e-6,

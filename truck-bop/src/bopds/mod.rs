@@ -492,8 +492,9 @@ impl BopDs {
     /// Rebuilds the base block partition from the normalized edge paves only.
     pub fn rebuild_pave_blocks_from_paves(&mut self, edge_id: EdgeId) {
         let edge_paves = self.paves_for_edge(edge_id);
-        self.pave_blocks
-            .retain(|block| block.original_edge != edge_id);
+        self.pave_blocks.retain(|block| {
+            block.original_edge != edge_id || !block.ext_paves.is_empty() || block.split_result.is_some()
+        });
         self.pave_blocks.extend(
             edge_paves.windows(2).map(|pair| {
                 PaveBlock::from_pave_pair(pair[0], pair[1], self.options.parametric_tol)
@@ -514,6 +515,7 @@ impl BopDs {
 
         for mut block in original_blocks {
             let ordered = block.ordered_paves(self.options.parametric_tol);
+            block.ext_paves.clear();
             let split_result = ordered
                 .windows(2)
                 .map(|pair| (pair[0].vertex, pair[1].vertex))
@@ -1081,6 +1083,71 @@ mod tests {
         assert!(rebuilt[0].ext_paves.is_empty());
         assert!(rebuilt[0].split_result.is_none());
         assert_eq!(rebuilt[0].param_range, (0.0, 1.0));
+    }
+
+    #[test]
+    fn paveblock_rebuild_is_idempotent() {
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+
+        ds.push_pave(Pave::new(EdgeId(13), VertexId(130), 0.25, 1.0e-6).unwrap());
+        ds.push_pave(Pave::new(EdgeId(13), VertexId(131), 0.75, 1.0e-6).unwrap());
+        ds.rebuild_paves_for_edges(&[(EdgeId(13), edge)]);
+
+        let first = ds.pave_blocks_for_edge(EdgeId(13));
+        ds.rebuild_pave_blocks_from_paves(EdgeId(13));
+        let second = ds.pave_blocks_for_edge(EdgeId(13));
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn split_pave_blocks_repeated_run_keeps_same_ranges() {
+        let mut ds = BopDs::with_options(BopOptions {
+            parametric_tol: 1.0e-6,
+            ..BopOptions::default()
+        });
+        let edge = line_edge(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+
+        ds.rebuild_paves_for_edges(&[(EdgeId(14), edge)]);
+        assert!(ds.append_ext_pave(
+            EdgeId(14),
+            Pave::new(EdgeId(14), VertexId(140), 0.25, 1.0e-6).unwrap()
+        ));
+        assert!(ds.append_ext_pave(
+            EdgeId(14),
+            Pave::new(EdgeId(14), VertexId(141), 0.75, 1.0e-6).unwrap()
+        ));
+
+        ds.split_pave_blocks_for_edge(EdgeId(14));
+        let first = ds.pave_blocks_for_edge(EdgeId(14));
+        let first_ranges: Vec<_> = first.iter().map(|block| block.param_range).collect();
+        let first_vertices: Vec<_> = first
+            .iter()
+            .map(|block| (block.start_vertex, block.end_vertex))
+            .collect();
+
+        ds.split_pave_blocks_for_edge(EdgeId(14));
+        let second = ds.pave_blocks_for_edge(EdgeId(14));
+        let second_ranges: Vec<_> = second.iter().map(|block| block.param_range).collect();
+        let second_vertices: Vec<_> = second
+            .iter()
+            .map(|block| (block.start_vertex, block.end_vertex))
+            .collect();
+
+        assert_eq!(first_ranges, vec![(0.0, 0.25), (0.25, 0.75), (0.75, 1.0)]);
+        assert_eq!(first_ranges, second_ranges);
+        assert_eq!(first_vertices, second_vertices);
+        assert!(second.iter().all(|block| block.ext_paves.is_empty()));
+        assert!(second.iter().all(|block| {
+            block
+                .split_result
+                .as_ref()
+                .is_some_and(|children| children.len() == 1)
+        }));
     }
 
     #[test]
