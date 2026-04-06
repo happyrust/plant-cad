@@ -96,9 +96,7 @@ impl FaceInfo {
     }
 
     /// Mark this record consumed as snapshot.
-    pub fn mark_clean(&mut self) {
-        self.is_dirty = false;
-    }
+    pub fn mark_clean(&mut self) { self.is_dirty = false; }
 
     /// Registers a boundary vertex if it was not recorded yet.
     pub fn push_on_vertex(&mut self, vertex: VertexId) -> bool {

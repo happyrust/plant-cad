@@ -508,11 +508,13 @@ fn bind_face_info_from_edge_face_fact(
     vertex_id: VertexId,
 ) {
     let common_block_paves = bopds
-        .common_block_for_pave_block(pave_block_id)
-        .and_then(|common_block_id| bopds.common_block(common_block_id))
-        .map(|common_block| common_block.pave_blocks.clone());
+        .commonblock_from_paveblocks_for_face(face_id, &[pave_block_id])
+        .into_iter()
+        .filter_map(|common_block_id| bopds.common_block(common_block_id))
+        .flat_map(|common_block| common_block.pave_blocks.iter().copied())
+        .collect::<Vec<_>>();
     let is_boundary = surface_parameters_on_boundary(surface_parameters);
-    if let Some(common_block_paves) = common_block_paves {
+    if !common_block_paves.is_empty() {
         bopds.push_face_on_vertex(face_id, vertex_id);
         bopds.push_face_sc_vertex(face_id, vertex_id);
         bopds.push_face_on_pave_block(face_id, pave_block_id);
@@ -884,6 +886,46 @@ mod tests {
             .expect("common block should exist");
         assert_eq!(common_block.faces, vec![FaceId(21)]);
         assert_eq!(common_block.pave_blocks, vec![pave_block_id]);
+    }
+
+    #[test]
+    fn ef_intersection_bind_face_info_uses_all_face_common_blocks() {
+        use crate::bopds::CommonBlock;
+
+        let mut bopds = BopDs::new();
+        let mut block_a = CommonBlock::new(
+            vec![crate::PaveBlockId(1), crate::PaveBlockId(2)],
+            vec![FaceId(99)],
+            Some(EdgeId(7)),
+        );
+        block_a.register_witness_edge(EdgeId(7));
+
+        let block_b = CommonBlock::new(
+            vec![crate::PaveBlockId(1), crate::PaveBlockId(3)],
+            vec![FaceId(99)],
+            Some(EdgeId(8)),
+        );
+        let block_a_id = bopds.push_common_block(block_a);
+        let block_b_id = bopds.push_common_block(block_b);
+        assert_ne!(block_a_id, block_b_id);
+
+        bind_face_info_from_edge_face_fact(
+            &mut bopds,
+            FaceId(99),
+            0.5,
+            (0.0, 0.3),
+            crate::PaveBlockId(1),
+            VertexId(10),
+        );
+
+        let info = bopds
+            .face_info(FaceId(99))
+            .expect("face info should be available after binding");
+        assert_eq!(info.sc_vertices, vec![VertexId(10)]);
+        assert_eq!(info.sc_pave_blocks.len(), 3);
+        assert!(info.sc_pave_blocks.contains(&crate::PaveBlockId(1)));
+        assert!(info.sc_pave_blocks.contains(&crate::PaveBlockId(2)));
+        assert!(info.sc_pave_blocks.contains(&crate::PaveBlockId(3)));
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {

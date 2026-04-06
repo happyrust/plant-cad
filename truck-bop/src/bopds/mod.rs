@@ -231,6 +231,39 @@ impl BopDs {
             .filter(move |common_block| common_block.contains_face(face_id))
     }
 
+    /// Returns all common-block identifiers for the given face that contains one or more
+    /// of the provided pave blocks.
+    pub fn commonblock_from_paveblocks_for_face(
+        &self,
+        face_id: FaceId,
+        pave_blocks: &[PaveBlockId],
+    ) -> Vec<CommonBlockId> {
+        let mut common_block_ids = Vec::new();
+        for (index, common_block) in self.common_blocks.iter().enumerate() {
+            if !common_block.is_effective() {
+                continue;
+            }
+            if !common_block.contains_face(face_id) {
+                continue;
+            }
+            if common_block
+                .pave_blocks
+                .iter()
+                .any(|pave_block| pave_blocks.contains(pave_block))
+            {
+                common_block_ids.push(CommonBlockId(index as u32));
+            }
+        }
+        common_block_ids
+    }
+
+    /// Iterates all effective common blocks associated with the given edge.
+    pub fn common_blocks_for_edge(&self, edge_id: EdgeId) -> impl Iterator<Item = &CommonBlock> {
+        self.common_blocks.iter().filter(move |common_block| {
+            common_block.is_effective() && common_block.representative_edge == Some(edge_id)
+        })
+    }
+
     /// Stores a common block and returns its identifier.
     pub fn push_common_block(&mut self, common_block: CommonBlock) -> CommonBlockId {
         let common_block_id = CommonBlockId(self.common_blocks.len() as u32);
@@ -1408,6 +1441,49 @@ mod tests {
         assert_eq!(ds.common_block_generation(), 5);
         assert!(ds.common_blocks().is_empty());
         assert_eq!(ds.common_blocks_snapshot_version(), 2);
+    }
+
+    #[test]
+    fn commonblock_from_paveblocks_for_face() {
+        use super::common_block::CommonBlock;
+
+        let mut ds = BopDs::new();
+
+        let first = CommonBlock::new(
+            vec![PaveBlockId(1), PaveBlockId(2)],
+            vec![FaceId(1), FaceId(2)],
+            Some(EdgeId(10)),
+        );
+        let second = CommonBlock::new(vec![PaveBlockId(3)], vec![FaceId(1)], Some(EdgeId(11)));
+        let third = CommonBlock::new(vec![PaveBlockId(4)], vec![FaceId(3)], None);
+
+        let first_id = ds.push_common_block(first);
+        let second_id = ds.push_common_block(second);
+        let third_id = ds.push_common_block(third);
+        assert_eq!(ds.common_blocks_for_face(FaceId(1)).count(), 2);
+
+        assert_eq!(
+            ds.commonblock_from_paveblocks_for_face(FaceId(1), &[PaveBlockId(1)]),
+            vec![first_id]
+        );
+        assert_eq!(
+            ds.commonblock_from_paveblocks_for_face(FaceId(1), &[PaveBlockId(3)]),
+            vec![second_id]
+        );
+        assert_eq!(
+            ds.commonblock_from_paveblocks_for_face(FaceId(1), &[PaveBlockId(2), PaveBlockId(3)]),
+            vec![first_id, second_id]
+        );
+        assert!(ds
+            .commonblock_from_paveblocks_for_face(FaceId(2), &[PaveBlockId(3)])
+            .is_empty());
+        assert!(ds
+            .commonblock_from_paveblocks_for_face(FaceId(3), &[PaveBlockId(4)])
+            .contains(&third_id));
+        assert_eq!(
+            ds.common_blocks_for_edge(EdgeId(10)).collect::<Vec<_>>(),
+            vec![&ds.common_blocks()[first_id.0 as usize]]
+        );
     }
 
     #[test]
