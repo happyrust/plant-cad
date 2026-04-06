@@ -1365,12 +1365,19 @@ mod tests {
         let mut first = CommonBlock::new(vec![PaveBlockId(1)], vec![FaceId(2)], Some(EdgeId(3)));
         first.register_witness_edge(EdgeId(7));
         first.register_witness_face(FaceId(8));
+        let second = CommonBlock::new(vec![PaveBlockId(2)], vec![FaceId(3)], Some(EdgeId(11)));
 
         let block_id = ds.push_common_block(first);
-        assert_eq!(ds.common_block_generation(), 1);
+        let second_id = ds.push_common_block(second);
+        assert_eq!(ds.common_block_generation(), 2);
+        assert_eq!(ds.common_blocks_for_face(FaceId(2)).count(), 1);
+        assert_eq!(
+            ds.common_block_for_pave_block(PaveBlockId(2)),
+            Some(second_id)
+        );
         assert_eq!(ds.common_blocks_snapshot_version(), 0);
-        assert_eq!(ds.mark_common_blocks_snapshot(), 1);
-        assert_eq!(ds.common_blocks_snapshot_version(), 1);
+        assert_eq!(ds.mark_common_blocks_snapshot(), 2);
+        assert_eq!(ds.common_blocks_snapshot_version(), 2);
 
         let blocks_for_face: Vec<_> = ds.common_blocks_for_face(FaceId(2)).collect();
         assert_eq!(blocks_for_face.len(), 1);
@@ -1381,22 +1388,26 @@ mod tests {
             .remove_common_block(block_id)
             .expect("common block should be removed");
         assert_eq!(removed.pave_blocks, vec![PaveBlockId(1)]);
-        assert_eq!(ds.common_block_generation(), 2);
-        assert!(ds.common_blocks().is_empty());
+        assert_eq!(ds.common_block_generation(), 3);
+        assert_eq!(ds.common_blocks().len(), 1);
         assert_eq!(ds.common_block_for_pave_block(PaveBlockId(1)), None);
+        assert_eq!(
+            ds.common_block_for_pave_block(PaveBlockId(2)),
+            Some(CommonBlockId(0))
+        );
 
         ds.push_common_block(CommonBlock::new(
             vec![PaveBlockId(9)],
             vec![FaceId(3)],
             Some(EdgeId(10)),
         ));
-        assert_eq!(ds.common_block_generation(), 3);
+        assert_eq!(ds.common_block_generation(), 4);
         assert_eq!(ds.common_blocks_for_face(FaceId(2)).count(), 0);
 
         ds.clear_common_blocks();
-        assert_eq!(ds.common_block_generation(), 4);
+        assert_eq!(ds.common_block_generation(), 5);
         assert!(ds.common_blocks().is_empty());
-        assert_eq!(ds.common_blocks_snapshot_version(), 1);
+        assert_eq!(ds.common_blocks_snapshot_version(), 2);
     }
 
     #[test]
