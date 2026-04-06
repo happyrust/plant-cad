@@ -7,11 +7,14 @@ mod ids;
 mod interference;
 mod pave;
 mod pave_block;
+mod split_edge;
 pub(crate) mod shape_info;
 
 pub use common_block::CommonBlock;
 pub use face_info::FaceInfo;
-pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
+pub use ids::{
+    CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, SplitEdgeId, VertexId,
+};
 pub use interference::{
     EEInterference, EEInterferenceKind, EFInterference, FFInterference, InterferenceTable,
     MergedVertex, SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace,
@@ -20,6 +23,7 @@ pub use interference::{
 };
 pub use pave::Pave;
 pub use pave_block::PaveBlock;
+pub use split_edge::SplitEdgeRecord;
 
 use crate::BopOptions;
 use crate::PointClassification;
@@ -46,6 +50,7 @@ pub struct BopDs {
     interference_pairs: FxHashMap<(ShapeId, ShapeId), usize>,
     paves: Vec<Pave>,
     pave_blocks: Vec<PaveBlock>,
+    split_edges: Vec<SplitEdgeRecord>,
     next_section_curve_id: u32,
     next_generated_vertex_id: u32,
 }
@@ -68,6 +73,7 @@ impl BopDs {
             interference_pairs: FxHashMap::default(),
             paves: Vec::new(),
             pave_blocks: Vec::new(),
+            split_edges: Vec::new(),
             next_section_curve_id: 0,
             next_generated_vertex_id: 1_000_000,
         }
@@ -591,6 +597,45 @@ impl BopDs {
 
     /// Borrow all stored pave blocks.
     pub fn pave_blocks(&self) -> &[PaveBlock] { &self.pave_blocks }
+
+    /// Stores a materialized split-edge fact and returns its identifier.
+    pub fn push_split_edge(&mut self, mut split_edge: SplitEdgeRecord) -> SplitEdgeId {
+        let split_edge_id = SplitEdgeId(self.split_edges.len() as u32);
+        split_edge.id = split_edge_id;
+        self.split_edges.push(split_edge);
+        split_edge_id
+    }
+
+    /// Borrows all materialized split-edge facts.
+    pub fn split_edges(&self) -> &[SplitEdgeRecord] { &self.split_edges }
+
+    /// Borrows a materialized split-edge fact by identifier.
+    pub fn split_edge(&self, split_edge_id: SplitEdgeId) -> Option<&SplitEdgeRecord> {
+        self.split_edges.get(split_edge_id.0 as usize)
+    }
+
+    /// Borrows all materialized split-edge facts for a source edge.
+    pub fn split_edges_for_edge(
+        &self,
+        edge_id: EdgeId,
+    ) -> impl Iterator<Item = &SplitEdgeRecord> + '_ {
+        self.split_edges
+            .iter()
+            .filter(move |split_edge| split_edge.original_edge == edge_id)
+    }
+
+    /// Borrows all materialized split-edge facts linked to a common block.
+    pub fn split_edges_for_common_block(
+        &self,
+        common_block_id: CommonBlockId,
+    ) -> impl Iterator<Item = &SplitEdgeRecord> + '_ {
+        self.split_edges
+            .iter()
+            .filter(move |split_edge| split_edge.common_block == Some(common_block_id))
+    }
+
+    /// Clears all materialized split-edge facts.
+    pub fn clear_split_edges(&mut self) { self.split_edges.clear(); }
 
     /// Clear previously computed merged vertex clusters.
     pub fn clear_merged_vertices(&mut self) { self.interferences.merged_vertices.clear(); }
@@ -1548,6 +1593,51 @@ mod tests {
     fn bopds_mark_face_info_snapshot_no_record_returns_none() {
         let mut ds = BopDs::new();
         assert_eq!(ds.mark_face_info_snapshot(FaceId(88)), None);
+    }
+
+    #[test]
+    fn bopds_can_store_split_edge_records() {
+        let mut ds = BopDs::new();
+        let first_id = ds.push_split_edge(SplitEdgeRecord::new(
+            SplitEdgeId(u32::MAX),
+            EdgeId(5),
+            VertexId(10),
+            VertexId(11),
+            (0.0, 0.5),
+            Some(CommonBlockId(2)),
+            false,
+        ));
+        let second_id = ds.push_split_edge(SplitEdgeRecord::new(
+            SplitEdgeId(u32::MAX),
+            EdgeId(5),
+            VertexId(11),
+            VertexId(12),
+            (0.5, 1.0),
+            None,
+            true,
+        ));
+
+        assert_eq!(first_id, SplitEdgeId(0));
+        assert_eq!(second_id, SplitEdgeId(1));
+        assert_eq!(ds.split_edges().len(), 2);
+        assert_eq!(ds.split_edge(first_id).unwrap().param_range, (0.0, 0.5));
+        assert!(ds.split_edge(second_id).unwrap().unsplittable);
+
+        let edge_ranges: Vec<_> = ds
+            .split_edges_for_edge(EdgeId(5))
+            .map(|record| record.param_range)
+            .collect();
+        assert_eq!(edge_ranges, vec![(0.0, 0.5), (0.5, 1.0)]);
+
+        let common_block_links: Vec<_> = ds
+            .split_edges_for_common_block(CommonBlockId(2))
+            .map(|record| record.id)
+            .collect();
+        assert_eq!(common_block_links, vec![SplitEdgeId(0)]);
+
+        ds.clear_split_edges();
+        assert!(ds.split_edges().is_empty());
+        assert!(ds.split_edge(SplitEdgeId(0)).is_none());
     }
 
     fn line_edge(start: Point3, end: Point3) -> Edge<Point3, truck_modeling::Curve> {

@@ -24,6 +24,10 @@ pub struct PaveBlockId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CommonBlockId(pub u32);
 
+/// Split edge identifier
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SplitEdgeId(pub u32);
+
 /// Section curve identifier
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SectionCurveId(pub u32);
