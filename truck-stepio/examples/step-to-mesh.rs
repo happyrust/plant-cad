@@ -161,7 +161,7 @@ fn output_vtk(polyshells: Vec<MeshedCShell>, path: &Path) {
         )
         .collect::<Vec<_>>();
     let vtk = Vtk {
-        version: (1, 0).into(),
+        version: Version::new_xml(1, 0),
         title: String::new(),
         byte_order: ByteOrder::LittleEndian,
         file_path: None,
@@ -200,7 +200,7 @@ fn output_vtk_edge(polyshells: Vec<MeshedCShell>, path: &Path) {
         })
         .collect::<Vec<_>>();
     let vtk = Vtk {
-        version: (1, 0).into(),
+        version: Version::new_xml(1, 0),
         title: String::new(),
         byte_order: ByteOrder::LittleEndian,
         file_path: None,
