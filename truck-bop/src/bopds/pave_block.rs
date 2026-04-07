@@ -1,12 +1,14 @@
 //! Pave block structure
 
-use crate::{EdgeId, VertexId};
+use crate::{EdgeId, PaveBlockId, VertexId};
 
 use super::Pave;
 
 /// Pave block - represents a segment of an edge between two paves
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaveBlock {
+    /// Stable identifier for this block within the current partition lifecycle.
+    pub id: PaveBlockId,
     /// Original edge
     pub original_edge: EdgeId,
     /// Start pave vertex.
@@ -25,7 +27,12 @@ pub struct PaveBlock {
 
 impl PaveBlock {
     /// Create a pave block from consecutive paves on the same edge.
-    pub fn from_pave_pair(start: Pave, end: Pave, parametric_tol: f64) -> Self {
+    pub fn from_pave_pair(
+        id: PaveBlockId,
+        start: Pave,
+        end: Pave,
+        parametric_tol: f64,
+    ) -> Self {
         debug_assert_eq!(start.edge, end.edge);
         let (start, end) = if start.parameter <= end.parameter {
             (start, end)
@@ -35,6 +42,7 @@ impl PaveBlock {
         let start_parameter = start.parameter;
         let end_parameter = end.parameter;
         Self {
+            id,
             original_edge: start.edge,
             start_vertex: start.vertex,
             end_vertex: end.vertex,
@@ -119,8 +127,9 @@ mod tests {
             tolerance: 1.0e-6,
         };
 
-        let block = PaveBlock::from_pave_pair(start, end, 1.0e-8);
+        let block = PaveBlock::from_pave_pair(PaveBlockId(0), start, end, 1.0e-8);
 
+        assert_eq!(block.id, PaveBlockId(0));
         assert!(block.unsplittable);
         assert_eq!(block.param_range, (0.5, 0.500000005));
     }
@@ -140,8 +149,9 @@ mod tests {
             tolerance: 1.0e-6,
         };
 
-        let block = PaveBlock::from_pave_pair(higher, lower, 1.0e-8);
+        let block = PaveBlock::from_pave_pair(PaveBlockId(4), higher, lower, 1.0e-8);
 
+        assert_eq!(block.id, PaveBlockId(4));
         assert_eq!(block.start_vertex, VertexId(71));
         assert_eq!(block.end_vertex, VertexId(70));
         assert_eq!(block.param_range, (0.2, 0.8));
@@ -150,6 +160,7 @@ mod tests {
     #[test]
     fn pave_block_orders_and_deduplicates_extra_paves() {
         let mut block = PaveBlock::from_pave_pair(
+            PaveBlockId(2),
             Pave::new(EdgeId(3), VertexId(30), 0.0, 1.0e-6).unwrap(),
             Pave::new(EdgeId(3), VertexId(31), 1.0, 1.0e-6).unwrap(),
             1.0e-6,

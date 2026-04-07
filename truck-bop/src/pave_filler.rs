@@ -218,15 +218,14 @@ impl PaveFiller {
         let materialized = bopds
             .pave_blocks()
             .iter()
-            .enumerate()
-            .map(|(index, block)| {
+            .map(|block| {
                 crate::SplitEdgeRecord::new(
                     crate::SplitEdgeId(u32::MAX),
                     block.original_edge,
                     block.start_vertex,
                     block.end_vertex,
                     block.param_range,
-                    bopds.common_block_for_pave_block(crate::PaveBlockId(index as u32)),
+                    bopds.common_block_for_pave_block(block.id),
                     block.unsplittable,
                 )
             })
@@ -564,6 +563,8 @@ mod tests {
 
     #[test]
     fn make_split_edges_is_idempotent_across_repeated_runs() {
+        use crate::bopds::CommonBlock;
+
         let mut bopds = BopDs::with_options(BopOptions {
             parametric_tol: 1.0e-8,
             ..BopOptions::default()
@@ -575,10 +576,18 @@ mod tests {
         bopds.push_pave(Pave::new(edge_id, VertexId(32), 0.75, 1.0e-8).unwrap());
         bopds.push_pave(Pave::new(edge_id, VertexId(33), 1.0, 1.0e-8).unwrap());
         bopds.rebuild_pave_blocks_from_paves(edge_id);
+        let common_block_id = bopds.push_common_block(CommonBlock::new(
+            vec![bopds.pave_blocks_for_edge(edge_id)[1].id],
+            vec![FaceId(410)],
+            Some(edge_id),
+        ));
 
         let mut filler = PaveFiller::new();
         let first_count = filler.make_split_edges(&mut bopds);
         let first_records = bopds.split_edges().to_vec();
+        assert_eq!(first_records[1].common_block, Some(common_block_id));
+
+        bopds.rebuild_pave_blocks_from_paves(edge_id);
         let second_count = filler.make_split_edges(&mut bopds);
 
         assert_eq!(first_count, 3);
