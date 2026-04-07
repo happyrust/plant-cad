@@ -2,39 +2,49 @@
 
 Testing surface and validation approach for truck-bop.
 
-**What belongs here:** Test execution details, validation surface info, resource constraints.
+**What belongs here:** Test execution details, validation surface info, and resource constraints for CLI validation.
 
 ---
 
 ## Validation Surface
 
-**Surface:** Command-line (cargo test)
+**Surface:** Command-line (`cargo`)
 
-**Tools:**
-- cargo test -p truck-bop
-- cargo check -p truck-bop
-- cargo clippy -p truck-bop
+**Primary tools:**
+- `sh .factory/init.sh`
+- `cargo test -p truck-bop <exact-test-name> -- --exact`
+- `cargo test -p truck-bop`
+- `cargo check -p truck-bop`
+- `cargo check --release -p truck-bop`
 
-**Approach:**
-- Unit tests verify individual algorithms
-- Integration tests verify end-to-end boolean operations
-- TDD: write failing tests first, then implement
+**Mission-specific approach:**
+- Use focused exact tests first for split-edge DS storage, materialization, idempotence, CommonBlock linkage, and report alignment.
+- Use pipeline and trim regression anchors as the end-to-end CLI surface for downstream consistency.
+- Treat command exit status plus concise test output as the user-visible validation surface for this library mission.
+- Avoid modifying source files during validation; validators only record evidence.
 
 ## Validation Concurrency
 
-**Max concurrent validators:** 5
+**Max concurrent validators:**
+- `3` for check-only validation
+- `2` for test-heavy or cold-build validation
 
-**Rationale:** Tests are CPU-bound. Machine has 12 cores with sufficient memory. 5 concurrent test processes provide good parallelism without overloading.
+**Rationale:**
+- This machine has 16 GiB RAM and 10 CPU cores.
+- Warm `cargo check` dry runs succeeded quickly, but `cargo` and `rustc` can parallelize internally, so CPU oversubscription is the main risk.
+- Using 70 percent of practical headroom favors conservative parallelism for reliability.
 
-**Resource profile:**
-- Each test process: ~200MB RAM, 1-2 CPU cores
-- Total for 5 concurrent: ~1GB RAM, 5-10 cores
-- Well within machine capacity
+**Observed dry-run profile:**
+- `sh .factory/init.sh`: pass
+- `cargo metadata --no-deps --format-version 1`: pass
+- `cargo check -p truck-bop`: pass
+- `cargo check --release -p truck-bop`: pass
+- Warm-check wrapper footprint during dry run: about 69 MB resident footprint per timed command, but real compile/test memory can be materially higher.
 
 ## Flow Validator Guidance: cli
 
-- Stay on the CLI surface; validate behavior through `cargo test` and `cargo check` only.
-- Do not modify source files or workspace configuration during flow validation.
-- Prefer `cargo test -p truck-bop -- --list` first when exact unit test names are unclear, then rerun with fully-qualified names and `--exact`.
-- Write evidence only under the assigned mission evidence directory and flow report path.
-- Treat cargo warning noise as non-blocking unless it changes command exit status or masks assertion-specific failures.
+- Stay on the cargo CLI surface; do not open browsers or spawn extra services.
+- Prefer `cargo test -p truck-bop -- --list` only when an exact test name is unclear, then rerun with `--exact`.
+- Record exact commands, exit codes, and the key observation for each assertion.
+- Treat warning noise as non-blocking unless it changes exit status or masks assertion-specific failures.
+- Use full `cargo test -p truck-bop` only when the contract or milestone gate requires crate-wide confirmation.

@@ -12,6 +12,7 @@ NOTE: Startup and cleanup are handled by `mission-worker-base`. This skill defin
 Use this worker for truck-bop features involving:
 - Geometric intersection algorithms (VF, EE, EF, FF)
 - Pave and PaveBlock splitting logic
+- Split-edge materialization and DS storage
 - Section curve representation
 - Face splitting algorithms
 - Classification and selection logic
@@ -30,11 +31,13 @@ Before any implementation:
 - Create or update test module with `#[cfg(test)] mod tests`
 - Write focused unit tests that verify the expected behavior
 - Run tests to confirm they fail: `cargo test -p truck-bop <test_name> -- --exact`
+- If `--exact` reports 0 matches for a nested Rust test, rerun with the fully qualified libtest path (for example `module::tests::case_name`) before concluding the anchor is missing
 - Document what each test verifies in test names and comments
 
 Exception:
 - If the feature is explicitly a migration, regression-alignment, or documentation-hardening task and strong focused coverage already exists, you may use the existing failing test/regression as the RED anchor instead of adding a brand-new test. State that choice explicitly in the handoff.
 - If the assigned feature is already red on startup for the exact targeted behavior, treat that regression as the RED anchor first and repair the baseline before layering on broader follow-up changes.
+- If the assigned feature is a narrow reporting or integration slice that depends on already-green upstream behavior, you may verify the baseline commands first, then add or update the focused regression that proves the delta. State that sequence explicitly in the handoff.
 - Revert exploratory edits before handoff when they do not improve an already-red regression anchor, and document the investigated root-cause surfaces so the next worker can restart cleanly.
 
 ### 3. Implement Minimally (GREEN)
@@ -52,6 +55,9 @@ Mission-specific expectations for BOPDS migration work:
 - Preserve `BopDs::next_generated_vertex_id()` endpoint identity and the existing trim provenance/topology-key invariants.
 - Do not claim a feature complete if mission-critical data is still represented by placeholders (for example fake `CommonBlock` membership or sentinel block IDs); return to the orchestrator with the blocker instead.
 - After integrating EF or other face-state flows, re-run the pre-existing targeted regressions for endpoint-only or tangent contacts before claiming success.
+- For W5-2 split-edge materialization, derive split-edge facts from the final `bopds.pave_blocks()` partition rather than from transitional `split_result` state.
+- For W5-2 repeated-run safety, clear stale split-edge state before rematerializing it and prove idempotence with exact tests.
+- For W5-2 reporting work, wire pipeline and filler counts to the materialized split-edge layer without rewriting the trim provenance model.
 
 ### 4. Verify with Validators
 
@@ -59,6 +65,7 @@ After tests pass:
 - Run `cargo check -p truck-bop` (must pass)
 - Run `cargo test -p truck-bop` when the feature or milestone contract requires crate-wide confirmation; otherwise follow the narrower command plan in AGENTS.md and `.factory/services.yaml`
 - Run `cargo clippy -p truck-bop` only if the current feature explicitly requires clippy or the repository guidance says linting is in scope. Otherwise follow `.factory/services.yaml`.
+- Run `cargo check --release -p truck-bop` for reporting or pipeline-touching features unless the orchestrator explicitly narrows verification.
 
 ### 5. Manual Verification
 

@@ -11,3 +11,11 @@
 - Regression anchors for this model include source-boundary identity reuse, section-curve identity preservation on sewn open paths, generated-edge locality, shell assembly grouping, shell orientation repair, and disconnected-source-face reuse checks.
 - Current BOPDS migration work should keep split facts flowing through `PaveBlock`-aware `BopDs` APIs. If VE, EE, or EF learns new facts, those facts must not bypass the edge-block lifecycle and create a second ordering or identity source of truth.
 - For overlap-heavy work, prefer explicit paired-block or CommonBlock-ready facts over collapsing everything into point hits; later trimming and FF work depends on that distinction surviving the migration.
+
+## W5-2 split-edge materialization notes
+
+- Materialize split-edge facts from the final `bopds.pave_blocks()` partition after `split_pave_blocks_for_edge()` finishes; do not promote transitional `split_result` into the canonical fact source.
+- `make_split_edges()` should clear stale split-edge state before rebuilding it so repeated runs remain idempotent.
+- If split edges need overlap context, derive it from the existing `PaveBlock -> CommonBlock` mapping at materialization time instead of inventing a parallel overlap registry.
+- Keep pipeline reporting wired to `bopds.split_edges()` or a consistent derivation of the same run; do not leave report counts on the old `pave_blocks().len()` placeholder path.
+- W5-2 does not authorize a trim architecture rewrite. Preserve the current provenance and topology-key invariants and prove compatibility through focused trim regressions.

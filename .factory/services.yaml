@@ -1,8 +1,9 @@
+# CLI-only validation commands for the truck-bop W5-2 split-edge mission.
 commands:
   install: cargo build -p truck-bop
   test: cargo test -p truck-bop
   check: cargo check -p truck-bop
-  lint: echo "No dedicated lint gate for this mission; prefer focused cargo tests plus cargo check and cargo check --release"
+  lint: echo "No dedicated lint gate for W5-2; use focused cargo tests plus cargo check and cargo check --release"
   typecheck: cargo check -p truck-bop
   release_check: cargo check --release -p truck-bop
 
