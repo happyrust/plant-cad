@@ -1,0 +1,39 @@
+{
+  "featureId": "ef-intersection-impl",
+  "reviewedAt": "2026-03-15T16:03:48Z",
+  "commitId": "7d32de94",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The EF implementation stores results in BopDs and covers simple axis-aligned planar cases, but it does not satisfy the feature contract for trimmed faces with holes or for a single edge crossing the same face multiple times.",
+    "issues": [
+      {
+        "file": "truck-bop/src/intersect/ef.rs",
+        "line": 200,
+        "severity": "blocking",
+        "description": "Face containment is incorrect for trimmed faces with inner loops. `point_projects_inside_face` requires the projected UV to be inside every boundary wire (`all(...)`), which rejects any point inside the outer boundary but outside a hole. The architecture notes explicitly say containment must use outer-minus-holes logic, so EF intersections on valid trimmed regions will be dropped."
+      },
+      {
+        "file": "truck-bop/src/intersect/ef.rs",
+        "line": 334,
+        "severity": "blocking",
+        "description": "The tests do not verify the required behavior that one curve can cross the same face multiple times. `ef_intersection_handles_multiple_curve_crossings` uses two separate straight edges against one planar face, and the implementation itself is documented as missing rotated/non-planar cases. Because the worker simplified away the curved single-edge scenario from the transcript, the feature requirement `curve crosses face multiple times` remains unproven and likely unsupported."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The EF worker violated the documented trimmed-face containment rule by checking that every boundary contains the UV point, indicating the guidance in AGENTS/library was not followed or not prominent enough during implementation.",
+      "evidence": "`truck-bop/src/intersect/ef.rs:200` uses `face.boundaries().into_iter().all(...)`, while `.factory/library/architecture.md` says trimmed-face containment must use outer-minus-holes logic and `AGENTS.md:62` already documents EF containment limitations."
+    },
+    {
+      "area": "skills",
+      "observation": "The rust-bop worker skill's TDD guidance was not followed for the mission-critical multi-crossing behavior: the transcript shows the worker removed the curved-crossing case and ended with tests that only cover multiple candidate pairs, so the skill may need stronger emphasis on preserving expected-behavior coverage instead of simplifying tests to fit the implementation.",
+      "evidence": "Transcript for session `c296b96a-5c25-455d-9a65-c5644b44f4ea` states, 'I\u2019m changing the tangent test to a non-degenerate edge...' and earlier, 'I\u2019m simplifying the tests to exercise the required behavior with line edges only'; final test `truck-bop/src/intersect/ef.rs:334` uses two separate edges even though `features.json:595` requires a curve that crosses the face multiple times."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff `7d32de94`, the transcript skeleton, and the EF diff. The feature fails scrutiny because face-bound checking is wrong for trimmed faces with holes, and the implementation/tests do not demonstrate the required single-edge multi-crossing behavior."
+}

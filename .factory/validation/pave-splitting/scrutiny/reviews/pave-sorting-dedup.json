@@ -1,0 +1,33 @@
+{
+  "featureId": "pave-sorting-dedup",
+  "reviewedAt": "2026-03-15T16:32:54Z",
+  "commitId": "cdac8b7311f403650e5a95d8453cbc5902110dd4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature correctly sorts and deduplicates per-edge paves, but it does not fulfill the endpoint behavior safely because synthesized endpoint paves use sentinel vertex IDs that can collide with real IDs generated elsewhere in BopDs.",
+    "issues": [
+      {
+        "file": "truck-bop/src/bopds/mod.rs",
+        "line": 286,
+        "severity": "blocking",
+        "description": "`ensure_edge_endpoints()` synthesizes endpoint paves with hard-coded `VertexId(u32::MAX - 1)` and `VertexId(u32::MAX)`. Deduplication picks the smaller vertex ID as the representative, so if any real pave is ever created with one of those IDs, or if later code assumes every pave vertex refers to a registered/generated vertex, endpoint paves can alias unrelated vertices. BopDs already has `next_generated_vertex_id()` for safe synthesized IDs, but this feature does not use it."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still requires `cargo test -p truck-bop` and `cargo clippy -p truck-bop` unconditionally, but this mission already documents known out-of-scope baseline failures/noise. The worker deviated for that reason, and the skill should reflect the documented exception path.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` Step 4 says to run full-crate test/clippy; mission `AGENTS.md` says clippy may fail due to pre-existing issues and the transcript/handoff for worker `88b64bed-59a1-45f5-8cf2-a700bd0a7d9c` documents continuing after the unrelated FF failure."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture notes mention pave sorting/deduplication but do not record how synthetic pave endpoints should obtain stable vertex IDs. This omission likely contributed to using sentinel `u32::MAX` IDs instead of the existing generated-ID allocator in `BopDs`.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/library/architecture.md` only states 'Pave Splitting: Sort by parameter, deduplicate within tolerance'; `truck-bop/src/bopds/mod.rs` already exposes `next_generated_vertex_id()` for generated topology IDs, yet `ensure_edge_endpoints()` uses `VertexId(u32::MAX - 1)` and `VertexId(u32::MAX)` instead."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature handoff, transcript skeleton, commit `cdac8b7311f403650e5a95d8453cbc5902110dd4`, and current code. Sorting and tolerance-based deduplication behavior is covered by focused tests, but the endpoint-synthesis implementation is unsafe because it uses fixed sentinel vertex IDs rather than allocated generated IDs. Report marked fail on that blocking correctness risk."
+}

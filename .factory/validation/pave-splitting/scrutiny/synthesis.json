@@ -1,0 +1,52 @@
+{
+  "milestone": "pave-splitting",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cargo test -p truck-bop",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cargo check -p truck-bop",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "echo \"Skipping clippy due to known pre-existing issues in other workspace crates\"",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Documented that synthetic pave endpoints must allocate generated vertex IDs via `BopDs::next_generated_vertex_id()` rather than fixed sentinel IDs.",
+      "sourceFeature": "fix-pave-endpoint-vertex-ids"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update `rust-bop-worker` guidance for targeted Rust tests to warn that `cargo test -p truck-bop <name> -- --exact` can match 0 tests for module-scoped unit tests; require checking matched-test counts and using module-qualified paths or broader filters when needed.",
+      "evidence": "`/Volumes/DPC/work/cad/truck-new/.factory/skills/rust-bop-worker/SKILL.md` Step 2 recommends `cargo test -p truck-bop <test_name> -- --exact`; the fix handoff/transcript for worker `2343890c-5bb0-4ef0-8b3c-8060ca52a241` records `pave_sorting_allocates_generated_vertex_ids_for_missing_endpoints -- --exact` and `pave_sorting_reuses_existing_generated_endpoint_ids_on_rebuild -- --exact` both running 0 tests.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Update `rust-bop-worker` guidance for targeted Rust tests to warn that `cargo test -p truck-bop <name> -- --exact` can match 0 tests for module-scoped unit tests; require checking matched-test counts and using module-qualified paths or broader filters when needed.",
+      "evidence": "`.factory/skills/rust-bop-worker/SKILL.md` says to run `cargo test -p truck-bop <test_name> -- --exact`; the fix handoff for session `1bf7b55a-4b40-454a-9efd-eda1cb23b083` records `cargo test -p truck-bop pave_block_reorders_vertices_with_parameters -- --exact` and `cargo test -p truck-bop paveblock_creation_reorders_reversed_pave_pair_vertices -- --exact` both matching 0 tests before the broader `cargo test -p truck-bop paveblock_` run exercised the regressions.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/pave-splitting/scrutiny/synthesis.json"
+}

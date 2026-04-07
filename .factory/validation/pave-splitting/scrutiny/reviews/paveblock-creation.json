@@ -1,0 +1,28 @@
+{
+  "featureId": "paveblock-creation",
+  "reviewedAt": "2026-03-15T16:32:53.099376+00:00",
+  "commitId": "32a1dfef",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "PaveBlock generation is wired into `BopDs`, but the implementation does not preserve the correct block endpoint vertices when two paves are provided out of parameter order, so the stored segment topology can point backwards relative to the normalized parameter range.",
+    "issues": [
+      {
+        "file": "truck-bop/src/bopds/pave_block.rs",
+        "line": 29,
+        "severity": "blocking",
+        "description": "`PaveBlock::from_pave_pair` sorts only the numeric parameter range, but it keeps `start_vertex` from the first argument and `end_vertex` from the second. If callers pass two consecutive paves in descending parameter order, the block stores `param_range` as `(min, max)` while still associating the higher-parameter vertex to `start_vertex` and the lower-parameter vertex to `end_vertex`. This breaks the expected invariant that block endpoints align with the stored range and can invert downstream edge-segment topology."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still requires `cargo test -p truck-bop` and `cargo clippy -p truck-bop` after every feature, but this mission already documents known crate-wide failures/noise outside the worker scope. The transcript shows the worker had to justify deviating from the skill even though the mission guidance already says to rely on targeted verification when global validation is red for unrelated reasons.",
+      "evidence": "`.factory/skills/rust-bop-worker/SKILL.md` step 4 requires full-crate test and clippy success; handoff `2026-03-15T16-28-49-009Z__paveblock-creation__1092a0c9-ba10-4684-8e4d-733ce0ffd06b.json` records deviations because `cargo test -p truck-bop` is blocked by the known FF failure and clippy noise described in `/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit `32a1dfef` and the worker transcript for `paveblock-creation`. The feature adds pave-block storage and targeted tests, but the core constructor can associate vertices with the wrong ends of a sorted parameter range, so the implementation does not yet safely satisfy the expected PaveBlock behavior."
+}

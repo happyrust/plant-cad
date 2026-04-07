@@ -1,0 +1,33 @@
+{
+  "featureId": "section-projection",
+  "reviewedAt": "2026-03-16T00:00:00+00:00",
+  "commitId": "b866cc6a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The storage fix addresses the false-negative regression by preserving FF section curves when UV projection fails, but the original open-curve orientation bug remains unresolved and is now explicitly deferred via an ignored test.",
+    "issues": [
+      {
+        "file": "truck-bop/src/intersect/ff.rs",
+        "line": 122,
+        "severity": "blocking",
+        "description": "`orient_parameter_loop()` still normalizes open section polylines with a signed-area comparison against the face boundary. That heuristic is only meaningful for closed loops; for plane-plane sections the sign depends on arbitrary sample ordering, so projected UV polylines can still be reversed inconsistently between faces. The fix commit adds `orient_open_section_pair()`, but it leaves this area-based normalization in place and even marks `section_projection_respects_inverted_face_orientation` ignored as a known limitation, so the original requirement that projection respects face orientation is still unmet."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `rust-bop-worker` skill still tells workers to run `cargo test -p truck-bop <test_name> -- --exact`, but the fix worker transcript shows this repeatedly produced successful compile runs with zero matched tests for module-scoped FF test names, which weakened verification of the claimed regression coverage.",
+      "evidence": "`/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/handoffs/2026-03-15T18-31-13-303Z__fix-section-projection-storage__d9180edc-c5d5-4d0d-93a5-d0ff5ee72c2b.json` notes that `cargo test -p truck-bop ff_intersection_keeps_section_curve_when_one_face_projection_fails -- --exact` and `cargo test -p truck-bop section_projection_respects_inverted_face_orientation -- --exact` matched no tests; `.factory/skills/rust-bop-worker/SKILL.md` still recommends that exact pattern."
+    },
+    {
+      "area": "conventions",
+      "observation": "`AGENTS.md` already documents FF open-curve UV orientation as a deferred limitation, and the fix commit codifies that by ignoring the orientation regression test instead of resolving it. This confirms the mission shared state is aligned with current code, but also explains why the feature still fails review despite the storage fix.",
+      "evidence": "`/Users/dongpengcheng/.factory/missions/28558208-113c-4faf-9654-e1aaded1d9ab/AGENTS.md` lists 'FF open-curve UV orientation' under known limitations, and `truck-bop/src/intersect/ff.rs:385` marks `section_projection_respects_inverted_face_orientation` with `#[ignore] // Known limitation: open-curve UV orientation on inverted faces`."
+    }
+  ],
+  "addressesFailureFrom": "/Volumes/DPC/work/cad/truck-new/.factory/validation/face-splitting/scrutiny/reviews/section-projection.json",
+  "summary": "Reviewed the original `section-projection` commit `c52971a9`, the fix commit `b866cc6a`, the fix worker transcript skeleton, prior review, handoffs, and shared-state docs. The fix successfully removes the false negative where FF section curves were dropped when one UV projection failed by storing model-space sections with per-face projection availability. However, the remaining blocking issue from the prior review still stands: open section UV orientation is still normalized with a signed-area heuristic, and the regression test for inverted-face orientation is now ignored as a known limitation."
+}
