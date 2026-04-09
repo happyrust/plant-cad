@@ -332,9 +332,17 @@ where
             .collect::<Result<Vec<_>, BopError>>()?
     };
     bopds.boundary_edge_registry = registry;
+    if any_sections {
+        let shell: truck_topology::Shell<Point3, C, S> = rebuilt_faces.into_iter().collect();
+        if shell.shell_condition() == ShellCondition::Closed {
+            validate_shell_orientation(&shell)?;
+            return Ok(vec![shell]);
+        }
+        return Err(BopError::TopologyInvariantBroken);
+    }
+
     let sewn_faces = sew_shell_faces(split_faces, rebuilt_faces)?;
     let mut shells = Vec::new();
-
     for shell_faces in sewn_faces {
         let shell: truck_topology::Shell<Point3, C, S> = shell_faces.into_iter().collect();
         if shell.shell_condition() != ShellCondition::Closed {
@@ -343,7 +351,6 @@ where
         validate_shell_orientation(&shell)?;
         shells.push(shell);
     }
-
     Ok(shells)
 }
 
