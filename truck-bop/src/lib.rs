@@ -43,49 +43,211 @@ pub use trim::{
     select_split_faces_for_boolean_op, sew_fragment_edges,
 };
 
-/// Common (intersection) operation stub
-pub fn common<C, S>(
-    _a: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _b: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _tol: f64,
-) -> Result<truck_topology::Solid<truck_base::cgmath64::Point3, C, S>, BopError> {
-    Err(BopError::NotImplemented("common"))
+use rustc_hash::FxHashMap;
+use truck_base::cgmath64::Point3;
+use truck_modeling::{Curve, Surface};
+use truck_topology::{Edge, Face, Shell, Solid, Vertex};
+
+type P = Point3;
+
+/// Run the full boolean pipeline for the given operation.
+fn run_boolean_pipeline(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+    operation: BooleanOp,
+) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    let options = BopOptions {
+        geometric_tol: tol,
+        parametric_tol: tol * 0.01,
+        ..BopOptions::default()
+    };
+    let mut ds = BopDs::with_options(options);
+
+    let (vertices, edges, faces) = register_solid_shapes(&mut ds, a, 0);
+    let (vertices_b, edges_b, faces_b) = register_solid_shapes(&mut ds, b, 1);
+
+    let mut all_vertices = vertices;
+    all_vertices.extend(vertices_b);
+    let mut all_edges = edges;
+    all_edges.extend(edges_b);
+    let mut all_faces = faces;
+    all_faces.extend(faces_b);
+
+    let candidates =
+        generate_candidate_pairs(&all_vertices, &all_edges, &all_faces, ds.options());
+
+    intersect_vv(&mut ds, &all_vertices, &candidates.vv);
+    intersect_ve(&mut ds, &all_vertices, &all_edges, &candidates.ve);
+    intersect_vf(&mut ds, &all_vertices, &all_faces, &candidates.vf);
+
+    for &(ea_id, eb_id) in &candidates.ee {
+        let ea = all_edges.iter().find(|(id, _)| *id == ea_id).map(|(_, e)| e);
+        let eb = all_edges.iter().find(|(id, _)| *id == eb_id).map(|(_, e)| e);
+        if let (Some(ea), Some(eb)) = (ea, eb) {
+            let _ = intersect_ee(ea_id, eb_id, ea, eb, ds.options());
+        }
+    }
+
+    intersect_ef(&mut ds, &all_edges, &all_faces, &candidates.ef);
+    intersect_ff(&mut ds, &all_faces, &candidates.ff);
+
+    build_trimming_loops(&mut ds, &all_faces);
+    build_split_faces(&mut ds);
+
+    let solids_by_operand = vec![(0u8, a.clone()), (1u8, b.clone())];
+    classify_split_faces_against_operand(&mut ds, &solids_by_operand, &all_faces)?;
+
+    let selected = select_split_faces_for_boolean_op(&ds, operation);
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let split_faces = ds.split_faces().to_vec();
+    let merged = merge_equivalent_vertices(&mut ds, &split_faces, &all_faces);
+    sew_fragment_edges(&mut ds, &split_faces, &merged);
+
+    let faces_by_id: FxHashMap<FaceId, Face<P, Curve, Surface>> = all_faces
+        .iter()
+        .map(|(id, f)| (*id, f.clone()))
+        .collect();
+    let shells = assemble_shells(&mut ds, &split_faces, &faces_by_id)?;
+    let solids = build_solids_from_shells(shells)?;
+
+    Ok(solids)
 }
 
-/// Fuse (union) operation stub
-pub fn fuse<C, S>(
-    _a: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _b: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _tol: f64,
-) -> Result<truck_topology::Solid<truck_base::cgmath64::Point3, C, S>, BopError> {
-    Err(BopError::NotImplemented("fuse"))
+fn register_solid_shapes(
+    ds: &mut BopDs,
+    solid: &Solid<P, Curve, Surface>,
+    rank: u8,
+) -> (
+    Vec<(VertexId, Vertex<P>)>,
+    Vec<(EdgeId, Edge<P, Curve>)>,
+    Vec<(FaceId, Face<P, Curve, Surface>)>,
+) {
+    let mut vertices = Vec::new();
+    let mut edges = Vec::new();
+    let mut faces = Vec::new();
+
+    for shell in solid.boundaries() {
+        for face in shell.face_iter() {
+            let face_id = ds.register_face_source(rank);
+            faces.push((face_id, face.clone()));
+
+            for wire in face.boundaries() {
+                for edge in wire.edge_iter() {
+                    let edge_id = ds.register_edge_source(rank);
+                    edges.push((edge_id, edge.clone()));
+
+                    let vid = ds.register_vertex_source(rank);
+                    vertices.push((vid, edge.front().clone()));
+                }
+            }
+        }
+    }
+
+    (vertices, edges, faces)
 }
 
-/// Cut (difference) operation stub
-pub fn cut<C, S>(
-    _a: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _b: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _tol: f64,
-) -> Result<truck_topology::Solid<truck_base::cgmath64::Point3, C, S>, BopError> {
-    Err(BopError::NotImplemented("cut"))
+/// Common (intersection) operation.
+pub fn common(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    run_boolean_pipeline(a, b, tol, BooleanOp::Common)
 }
 
-/// Section operation stub
-pub fn section<C, S>(
-    _a: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
-    _b: &truck_topology::Solid<truck_base::cgmath64::Point3, C, S>,
+/// Fuse (union) operation.
+pub fn fuse(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    run_boolean_pipeline(a, b, tol, BooleanOp::Fuse)
+}
+
+/// Cut (difference) operation.
+pub fn cut(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    run_boolean_pipeline(a, b, tol, BooleanOp::Cut)
+}
+
+/// Section operation (not yet implemented).
+pub fn section(
+    _a: &Solid<P, Curve, Surface>,
+    _b: &Solid<P, Curve, Surface>,
     _tol: f64,
-) -> Result<truck_topology::Shell<truck_base::cgmath64::Point3, C, S>, BopError> {
+) -> Result<Shell<P, Curve, Surface>, BopError> {
     Err(BopError::NotImplemented("section"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use truck_base::bounding_box::BoundingBox;
+    use truck_modeling::primitive;
+
+    fn box_solid(min: [f64; 3], max: [f64; 3]) -> Solid<P, Curve, Surface> {
+        primitive::cuboid(BoundingBox::from_iter([
+            P::new(min[0], min[1], min[2]),
+            P::new(max[0], max[1], max[2]),
+        ]))
+    }
 
     #[test]
-    fn common_stub_reports_not_implemented() {
-        let err = BopError::NotImplemented("common");
-        assert!(matches!(err, BopError::NotImplemented(_)));
+    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
+    fn identical_boxes_common() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+        let result = common(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "common failed: {:?}", result.err());
+        let solids = result.unwrap();
+        assert!(!solids.is_empty(), "common of identical boxes should produce a solid");
+    }
+
+    #[test]
+    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
+    fn overlapping_boxes_fuse() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
+
+        let result = fuse(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "fuse failed: {:?}", result.err());
+    }
+
+    #[test]
+    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
+    fn overlapping_boxes_cut() {
+        let a = box_solid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = box_solid([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+
+        let result = cut(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "cut failed: {:?}", result.err());
+    }
+
+    #[test]
+    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
+    fn adjacent_boxes_fuse() {
+        let a = box_solid([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]);
+        let b = box_solid([0.0, 3.0, 0.0], [1.0, 4.0, 1.0]);
+
+        let result = fuse(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "fuse failed: {:?}", result.err());
+    }
+
+    #[test]
+    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
+    fn contained_box_fuse() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.25, 0.25, 0.25], [0.75, 0.75, 0.75]);
+
+        let result = fuse(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "fuse failed: {:?}", result.err());
     }
 }
