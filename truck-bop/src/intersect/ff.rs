@@ -15,6 +15,9 @@ use truck_topology::{Face, Shell};
 const SEARCH_PARAMETER_TRIALS: usize = 100;
 
 /// Detects face-face interferences and stores generated section curves in `BopDs`.
+///
+/// Uses an analytical fast path for plane-plane pairs; falls back to
+/// mesh-based intersection for general surface types.
 pub fn intersect_ff(
     bopds: &mut BopDs,
     faces: &[(FaceId, Face<Point3, Curve, Surface>)],
@@ -34,28 +37,14 @@ pub fn intersect_ff(
             continue;
         };
 
-        let shell1: Shell<Point3, Curve, Surface> = vec![face1.clone()].into();
-        let shell2: Shell<Point3, Curve, Surface> = vec![face2.clone()].into();
-        let poly1 = shell1.robust_triangulation(tolerance);
-        let poly2 = shell2.robust_triangulation(tolerance);
-        let Some(poly_face1) = poly1.face_iter().next() else {
-            continue;
+        let curves_result = if let Some(curves) =
+            try_analytical_plane_plane(face1, face2, tolerance)
+        {
+            Some(curves)
+        } else {
+            mesh_based_intersection(face1, face2, tolerance)
         };
-        let Some(poly_face2) = poly2.face_iter().next() else {
-            continue;
-        };
-        let Some(polygon1) = poly_face1.surface() else {
-            continue;
-        };
-        let Some(polygon2) = poly_face2.surface() else {
-            continue;
-        };
-
-        let surface1 = face1.oriented_surface();
-        let surface2 = face2.oriented_surface();
-        let segments = polygon1.extract_interference(&polygon2);
-        let polylines = construct_polylines(&segments);
-        let Some(curves) = build_section_samples(&surface1, &surface2, polylines) else {
+        let Some(curves) = curves_result else {
             continue;
         };
 
@@ -114,6 +103,197 @@ pub fn intersect_ff(
 
     count
 }
+
+// ── Analytical plane-plane intersection ──────────────────────────────────────
+
+fn try_analytical_plane_plane(
+    face0: &Face<Point3, Curve, Surface>,
+    face1: &Face<Point3, Curve, Surface>,
+    tolerance: f64,
+) -> Option<Vec<Vec<Point3>>> {
+    use truck_base::cgmath64::InnerSpace;
+
+    let (plane0, plane1) = match (face0.oriented_surface(), face1.oriented_surface()) {
+        (Surface::Plane(p0), Surface::Plane(p1)) => (p0, p1),
+        _ => return None,
+    };
+
+    let n0 = plane0.normal();
+    let n1 = plane1.normal();
+    let cross = n0.cross(n1);
+    if cross.magnitude2() < tolerance * tolerance {
+        return Some(Vec::new());
+    }
+    let direction = cross.normalize();
+
+    let line_origin = find_point_on_two_planes(&plane0, &plane1, n0, n1, direction)?;
+
+    let t_ranges_0 = clip_line_to_face_uv(line_origin, direction, face0, &plane0, tolerance);
+    let t_ranges_1 = clip_line_to_face_uv(line_origin, direction, face1, &plane1, tolerance);
+
+    let intersected = intersect_ranges(&t_ranges_0, &t_ranges_1);
+    if intersected.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut curves = Vec::new();
+    for (t_start, t_end) in &intersected {
+        let len = t_end - t_start;
+        if len < tolerance {
+            continue;
+        }
+        let n_samples = ((len / tolerance).ceil() as usize).clamp(2, 50);
+        let samples: Vec<Point3> = (0..n_samples)
+            .map(|i| {
+                let t = t_start + len * (i as f64) / ((n_samples - 1) as f64);
+                line_origin + direction * t
+            })
+            .collect();
+        curves.push(samples);
+    }
+
+    Some(curves)
+}
+
+fn find_point_on_two_planes(
+    plane0: &truck_modeling::Plane,
+    plane1: &truck_modeling::Plane,
+    n0: truck_base::cgmath64::Vector3,
+    n1: truck_base::cgmath64::Vector3,
+    direction: truck_base::cgmath64::Vector3,
+) -> Option<Point3> {
+    use truck_base::cgmath64::InnerSpace;
+
+    let d0 = n0.dot(plane0.origin() - Point3::new(0.0, 0.0, 0.0));
+    let d1 = n1.dot(plane1.origin() - Point3::new(0.0, 0.0, 0.0));
+
+    let n0n0 = n0.dot(n0);
+    let n1n1 = n1.dot(n1);
+    let n0n1 = n0.dot(n1);
+    let det = n0n0 * n1n1 - n0n1 * n0n1;
+    if det.abs() < 1.0e-30 {
+        return None;
+    }
+    let c0 = (d0 * n1n1 - d1 * n0n1) / det;
+    let c1 = (d1 * n0n0 - d0 * n0n1) / det;
+    let _ = direction;
+
+    Some(Point3::new(0.0, 0.0, 0.0) + n0 * c0 + n1 * c1)
+}
+
+fn clip_line_to_face_uv(
+    line_origin: Point3,
+    line_dir: truck_base::cgmath64::Vector3,
+    face: &Face<Point3, Curve, Surface>,
+    plane: &truck_modeling::Plane,
+    tolerance: f64,
+) -> Vec<(f64, f64)> {
+    let mut uv_vertices: Vec<Point2> = Vec::new();
+    for wire in face.boundaries() {
+        for vertex in wire.vertex_iter() {
+            let params = plane.get_parameter(vertex.point());
+            uv_vertices.push(Point2::new(params.x, params.y));
+        }
+    }
+
+    if uv_vertices.len() < 3 {
+        return Vec::new();
+    }
+
+    let lo_params = plane.get_parameter(line_origin);
+    let ld_params = plane.get_parameter(line_origin + line_dir) - lo_params;
+    let lo_uv = Point2::new(lo_params.x, lo_params.y);
+    let ld_uv = Point2::new(ld_params.x, ld_params.y);
+
+    let mut ts: Vec<f64> = Vec::new();
+
+    let n = uv_vertices.len();
+    for i in 0..n {
+        let a = uv_vertices[i];
+        let b = uv_vertices[(i + 1) % n];
+        if let Some(t) = line_segment_intersection_t(lo_uv, ld_uv, a, b) {
+            ts.push(t);
+        }
+    }
+
+    ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ts.dedup_by(|a, b| (*a - *b).abs() < tolerance);
+
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i + 1 < ts.len() {
+        let mid_t = (ts[i] + ts[i + 1]) / 2.0;
+        let mid_uv = Point2::new(lo_uv.x + ld_uv.x * mid_t, lo_uv.y + ld_uv.y * mid_t);
+        if geometry_utils::point_in_polygon(&uv_vertices, mid_uv)
+            || geometry_utils::point_on_polygon_boundary(&uv_vertices, mid_uv, tolerance)
+        {
+            ranges.push((ts[i], ts[i + 1]));
+        }
+        i += 1;
+    }
+
+    ranges
+}
+
+fn line_segment_intersection_t(
+    lo: Point2,
+    ld: Point2,
+    a: Point2,
+    b: Point2,
+) -> Option<f64> {
+    let seg = Point2::new(b.x - a.x, b.y - a.y);
+    let denom = ld.x * seg.y - ld.y * seg.x;
+    if denom.abs() < 1.0e-15 {
+        return None;
+    }
+    let diff = Point2::new(a.x - lo.x, a.y - lo.y);
+    let t = (diff.x * seg.y - diff.y * seg.x) / denom;
+    let s = (diff.x * ld.y - diff.y * ld.x) / denom;
+    if s >= -1.0e-10 && s <= 1.0 + 1.0e-10 {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+fn intersect_ranges(a: &[(f64, f64)], b: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut result = Vec::new();
+    for &(a0, a1) in a {
+        for &(b0, b1) in b {
+            let start = a0.max(b0);
+            let end = a1.min(b1);
+            if start < end {
+                result.push((start, end));
+            }
+        }
+    }
+    result
+}
+
+// ── Mesh-based intersection (fallback) ──────────────────────────────────────
+
+fn mesh_based_intersection(
+    face1: &Face<Point3, Curve, Surface>,
+    face2: &Face<Point3, Curve, Surface>,
+    tolerance: f64,
+) -> Option<Vec<Vec<Point3>>> {
+    let shell1: Shell<Point3, Curve, Surface> = vec![face1.clone()].into();
+    let shell2: Shell<Point3, Curve, Surface> = vec![face2.clone()].into();
+    let poly1 = shell1.robust_triangulation(tolerance);
+    let poly2 = shell2.robust_triangulation(tolerance);
+    let poly_face1 = poly1.face_iter().next()?;
+    let poly_face2 = poly2.face_iter().next()?;
+    let polygon1 = poly_face1.surface()?;
+    let polygon2 = poly_face2.surface()?;
+
+    let surface1 = face1.oriented_surface();
+    let surface2 = face2.oriented_surface();
+    let segments = polygon1.extract_interference(&polygon2);
+    let polylines = construct_polylines(&segments);
+    build_section_samples(&surface1, &surface2, polylines)
+}
+
+// ── UV projection utilities ─────────────────────────────────────────────────
 
 fn project_section_to_face(
     face: &Face<Point3, Curve, Surface>,
