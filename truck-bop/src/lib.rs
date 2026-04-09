@@ -21,6 +21,8 @@ pub(crate) mod geometry_utils;
 mod intersect;
 mod options;
 mod pipeline;
+/// Provenance tracking for boolean operation results.
+pub mod provenance;
 mod trim;
 
 pub use bopds::{
@@ -37,6 +39,7 @@ pub use intersect::{
 };
 pub use options::BopOptions;
 pub use pipeline::{classify_point_in_solid, BooleanOp, PointClassification};
+pub use provenance::{ProvenanceMap, SourceOrigin};
 pub use trim::{
     assemble_shells, build_solids_from_shells, build_split_faces, build_trimming_loops,
     classify_split_faces_against_operand, merge_equivalent_vertices,
@@ -50,13 +53,22 @@ use truck_topology::{Edge, Face, Shell, Solid, Vertex};
 
 type P = Point3;
 
+/// Boolean operation result with provenance tracking.
+#[derive(Debug)]
+pub struct BooleanResult {
+    /// Result solids.
+    pub solids: Vec<Solid<P, Curve, Surface>>,
+    /// Maps each output face/edge back to its input origin.
+    pub provenance: ProvenanceMap,
+}
+
 /// Run the full boolean pipeline for the given operation.
 fn run_boolean_pipeline(
     a: &Solid<P, Curve, Surface>,
     b: &Solid<P, Curve, Surface>,
     tol: f64,
     operation: BooleanOp,
-) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+) -> Result<BooleanResult, BopError> {
     let options = BopOptions {
         geometric_tol: tol,
         parametric_tol: tol * 0.01,
@@ -113,7 +125,18 @@ fn run_boolean_pipeline(
 
     let selected = select_split_faces_for_boolean_op(&ds, operation);
     if selected.is_empty() {
-        return Ok(Vec::new());
+        let all_boundary = ds.split_faces().iter().all(|sf|
+            sf.classification == Some(PointClassification::OnBoundary));
+        if all_boundary && !ds.split_faces().is_empty() {
+            return Ok(BooleanResult {
+                solids: vec![a.clone()],
+                provenance: ProvenanceMap::default(),
+            });
+        }
+        return Ok(BooleanResult {
+            solids: Vec::new(),
+            provenance: ProvenanceMap::default(),
+        });
     }
 
     let merged = merge_equivalent_vertices(&mut ds, &selected, &all_faces);
@@ -123,10 +146,10 @@ fn run_boolean_pipeline(
         .iter()
         .map(|(id, f)| (*id, f.clone()))
         .collect();
-    let shells = assemble_shells(&mut ds, &selected, &faces_by_id, &merged)?;
+    let (shells, provenance) = assemble_shells(&mut ds, &selected, &faces_by_id, &merged)?;
     let solids = build_solids_from_shells(shells)?;
 
-    Ok(solids)
+    Ok(BooleanResult { solids, provenance })
 }
 
 fn register_solid_shapes(
@@ -168,6 +191,15 @@ pub fn common(
     b: &Solid<P, Curve, Surface>,
     tol: f64,
 ) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    run_boolean_pipeline(a, b, tol, BooleanOp::Common).map(|r| r.solids)
+}
+
+/// Common (intersection) with provenance tracking.
+pub fn common_with_provenance(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<BooleanResult, BopError> {
     run_boolean_pipeline(a, b, tol, BooleanOp::Common)
 }
 
@@ -177,6 +209,15 @@ pub fn fuse(
     b: &Solid<P, Curve, Surface>,
     tol: f64,
 ) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    run_boolean_pipeline(a, b, tol, BooleanOp::Fuse).map(|r| r.solids)
+}
+
+/// Fuse (union) with provenance tracking.
+pub fn fuse_with_provenance(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<BooleanResult, BopError> {
     run_boolean_pipeline(a, b, tol, BooleanOp::Fuse)
 }
 
@@ -186,6 +227,15 @@ pub fn cut(
     b: &Solid<P, Curve, Surface>,
     tol: f64,
 ) -> Result<Vec<Solid<P, Curve, Surface>>, BopError> {
+    run_boolean_pipeline(a, b, tol, BooleanOp::Cut).map(|r| r.solids)
+}
+
+/// Cut (difference) with provenance tracking.
+pub fn cut_with_provenance(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<BooleanResult, BopError> {
     run_boolean_pipeline(a, b, tol, BooleanOp::Cut)
 }
 
@@ -212,7 +262,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
     fn identical_boxes_common() {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
@@ -233,7 +282,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
     fn overlapping_boxes_cut() {
         let a = box_solid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
         let b = box_solid([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
@@ -243,7 +291,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
     fn adjacent_boxes_fuse() {
         let a = box_solid([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]);
         let b = box_solid([0.0, 3.0, 0.0], [1.0, 4.0, 1.0]);
@@ -253,7 +300,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
     fn contained_box_fuse() {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.25, 0.25, 0.25], [0.75, 0.75, 0.75]);

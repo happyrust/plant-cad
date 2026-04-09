@@ -287,7 +287,7 @@ pub fn assemble_shells<C, S>(
     split_faces: &[SplitFace],
     faces_by_id: &FxHashMap<FaceId, Face<Point3, C, S>>,
     merged_map: &FxHashMap<VertexId, VertexId>,
-) -> Result<Vec<truck_topology::Shell<Point3, C, S>>, BopError>
+) -> Result<(Vec<truck_topology::Shell<Point3, C, S>>, crate::provenance::ProvenanceMap), BopError>
 where
     C: Clone
         + truck_geotrait::ParametricCurve<Point = Point3>
@@ -300,21 +300,30 @@ where
         + SearchNearestParameter<D2, Point = Point3>,
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
+    let mut prov = crate::provenance::ProvenanceMap::default();
+    prov.merged_vertices = merged_map.clone();
+
     let any_sections = split_faces.iter().any(|sf|
         sf.trimming_loops.iter().any(|tl| tl.edges.iter().any(|e| e.section_curve.is_some()))
     );
+    let multi_operand = {
+        let mut ranks = split_faces.iter().map(|sf| sf.operand_rank);
+        let first = ranks.next();
+        first.is_some() && ranks.any(|r| Some(r) != first)
+    };
+    let force_rebuild = any_sections || multi_operand;
 
     let merged = merged_map;
     let mut registry = std::mem::take(&mut bopds.boundary_edge_registry);
     let mut cache = TopologyCache::new();
-    let rebuilt_faces = if any_sections {
+    let rebuilt_faces = if force_rebuild {
         split_faces
             .iter()
             .map(|split_face| {
                 let original_face = faces_by_id.get(&split_face.original_face).ok_or(
                     BopError::InternalInvariant("missing source face for split face"),
                 )?;
-                rebuild_face_from_split_face(split_face, original_face, &mut cache, &merged)
+                rebuild_face_from_split_face(split_face, original_face, &mut cache, &merged, &mut prov)
             })
             .collect::<Result<Vec<_>, BopError>>()?
     } else {
@@ -325,19 +334,20 @@ where
                     BopError::InternalInvariant("missing source face for split face"),
                 )?;
                 if split_face_can_reuse_original_face(split_face, original_face, &mut registry) {
+                    prov.record_face(split_face.original_face, split_face.operand_rank);
                     Ok(original_face.clone())
                 } else {
-                    rebuild_face_from_split_face(split_face, original_face, &mut cache, &merged)
+                    rebuild_face_from_split_face(split_face, original_face, &mut cache, &merged, &mut prov)
                 }
             })
             .collect::<Result<Vec<_>, BopError>>()?
     };
     bopds.boundary_edge_registry = registry;
-    if any_sections {
+    if force_rebuild {
         let shell: truck_topology::Shell<Point3, C, S> = rebuilt_faces.into_iter().collect();
         let condition = shell.shell_condition();
         if condition == ShellCondition::Closed || condition == ShellCondition::Regular {
-            return Ok(vec![shell]);
+            return Ok((vec![shell], prov));
         }
         return Err(BopError::TopologyInvariantBroken);
     }
@@ -352,7 +362,7 @@ where
         validate_shell_orientation(&shell)?;
         shells.push(shell);
     }
-    Ok(shells)
+    Ok((shells, prov))
 }
 
 fn sew_shell_faces<C, S>(
@@ -1013,7 +1023,12 @@ where
         end_id: VertexId,
         start: &truck_topology::Vertex<Point3>,
         end: &truck_topology::Vertex<Point3>,
+        source: Option<crate::provenance::SourceOrigin>,
+        prov: &mut crate::provenance::ProvenanceMap,
     ) -> truck_topology::Edge<Point3, C> {
+        if let Some(src) = source {
+            prov.record_edge(start_id, end_id, src);
+        }
         if let Some(edge) = self.edges.get(&(start_id, end_id)) {
             return edge.clone();
         }
@@ -1031,6 +1046,7 @@ fn rebuild_face_from_split_face<C, S>(
     original_face: &Face<Point3, C, S>,
     cache: &mut TopologyCache<C>,
     merged: &FxHashMap<VertexId, VertexId>,
+    prov: &mut crate::provenance::ProvenanceMap,
 ) -> Result<Face<Point3, C, S>, BopError>
 where
     C: Clone
@@ -1043,11 +1059,13 @@ where
         + SearchParameter<D2, Point = Point3>,
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
+    prov.record_face(split_face.original_face, split_face.operand_rank);
+
     let surface = original_face.oriented_surface();
     let boundaries = split_face
         .trimming_loops
         .iter()
-        .map(|trimming_loop| rebuild_wire_from_trimming_loop(trimming_loop, &surface, cache, merged))
+        .map(|trimming_loop| rebuild_wire_from_trimming_loop(trimming_loop, &surface, cache, merged, prov))
         .collect::<Result<Vec<_>, _>>()?;
 
     if boundaries.is_empty() {
@@ -1062,6 +1080,7 @@ fn rebuild_wire_from_trimming_loop<C, S>(
     surface: &S,
     cache: &mut TopologyCache<C>,
     merged: &FxHashMap<VertexId, VertexId>,
+    prov: &mut crate::provenance::ProvenanceMap,
 ) -> Result<truck_topology::Wire<Point3, C>, BopError>
 where
     C: Clone
@@ -1100,7 +1119,14 @@ where
         let next = (i + 1) % vid_count;
         let (sid, start) = &topo_vertices[i];
         let (eid, end) = &topo_vertices[next];
-        edges.push(cache.get_or_create_edge(*sid, *eid, start, end));
+
+        let source = trimming_loop.edges.get(i).and_then(|te| {
+            te.section_curve
+                .map(crate::provenance::SourceOrigin::SectionCurve)
+                .or(te.original_edge.map(crate::provenance::SourceOrigin::OriginalEdge))
+        });
+
+        edges.push(cache.get_or_create_edge(*sid, *eid, start, end, source, prov));
     }
 
     Ok(truck_topology::Wire::from(edges))
@@ -1477,14 +1503,17 @@ fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> boo
     };
 
     match operation {
-        BooleanOp::Common => matches!(
-            classification,
-            PointClassification::Inside | PointClassification::OnBoundary
-        ),
-        BooleanOp::Fuse => matches!(
-            classification,
-            PointClassification::Outside | PointClassification::OnBoundary
-        ),
+        BooleanOp::Common => {
+            if split_face.operand_rank == 0 {
+                matches!(
+                    classification,
+                    PointClassification::Inside | PointClassification::OnBoundary
+                )
+            } else {
+                matches!(classification, PointClassification::Inside)
+            }
+        }
+        BooleanOp::Fuse => matches!(classification, PointClassification::Outside),
         BooleanOp::Cut => {
             if split_face.operand_rank == 0 {
                 matches!(
@@ -1561,6 +1590,7 @@ where
 {
     let all_sections: Vec<_> = section_curves
         .iter()
+        .filter(|sc| !section_samples_on_face_boundary(face, &sc.samples, tolerance))
         .filter_map(|sc| {
             sc.face_parameters
                 .iter()
@@ -1644,31 +1674,39 @@ where
     loops
 }
 
-fn extract_boundary_uv_points<C, S>(
+fn section_samples_on_face_boundary<C, S>(
     face: &Face<Point3, C, S>,
+    samples: &[Point3],
     tolerance: f64,
-) -> Vec<Point2>
+) -> bool
 where
     C: Clone,
-    S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
 {
-    let surface = face.oriented_surface();
-    let mut points = Vec::new();
+    if samples.is_empty() {
+        return true;
+    }
+    let mut boundary_segs = Vec::new();
     for wire in face.boundaries() {
-        for vertex in wire.vertex_iter() {
-            let uv = surface
-                .search_parameter(vertex.point(), None, SEARCH_PARAMETER_TRIALS)
-                .map(|(u, v)| Point2::new(u, v));
-            if let Some(uv) = uv {
-                points.push(uv);
-            }
+        let verts: Vec<Point3> = wire.vertex_iter().map(|v| v.point()).collect();
+        for i in 0..verts.len() {
+            boundary_segs.push((verts[i], verts[(i + 1) % verts.len()]));
         }
     }
-    points
-}
-
-fn point_near_polygon_boundary(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
-    geometry_utils::point_on_polygon_boundary(polygon, point, tolerance)
+    let tol_sq = tolerance * tolerance;
+    samples.iter().all(|&sample| {
+        boundary_segs.iter().any(|&(a, b)| {
+            let ab = b - a;
+            let ap = sample - a;
+            let len_sq = ab.x * ab.x + ab.y * ab.y + ab.z * ab.z;
+            if len_sq < 1.0e-30 {
+                return sample.distance2(a) <= tol_sq;
+            }
+            let t_num = ap.x * ab.x + ap.y * ab.y + ap.z * ab.z;
+            let t = (t_num / len_sq).clamp(0.0, 1.0);
+            let closest = Point3::new(a.x + ab.x * t, a.y + ab.y * t, a.z + ab.z * t);
+            closest.distance2(sample) <= tol_sq
+        })
+    })
 }
 
 // ── Edge-graph based loop construction ──────────────────────────────────────
@@ -1700,7 +1738,7 @@ where
     for wire in face.boundaries() {
         let mut hint = None;
         let mut uv_points = Vec::new();
-        let mut edges_iter: Vec<_> = wire.edge_iter().collect();
+        let edges_iter: Vec<_> = wire.edge_iter().collect();
 
         for vertex in wire.vertex_iter() {
             let point = vertex.point();
@@ -1723,7 +1761,6 @@ where
         let closed = close_polyline(uv_points.clone(), tolerance);
         for (i, edge) in edges_iter.iter().enumerate() {
             let start = closed[i];
-            let end = closed[(i + 1) % (closed.len().max(1))];
             if i + 1 >= closed.len() {
                 break;
             }
@@ -4105,7 +4142,8 @@ mod tests {
                 } else {
                     let mut cache = TopologyCache::new();
                     let empty_merged = FxHashMap::default();
-                    rebuild_face_from_split_face(split_face, original_face, &mut cache, &empty_merged).unwrap()
+                    let mut prov = crate::provenance::ProvenanceMap::default();
+                    rebuild_face_from_split_face(split_face, original_face, &mut cache, &empty_merged, &mut prov).unwrap()
                 }
             })
             .collect::<Vec<_>>();
@@ -4786,8 +4824,10 @@ mod tests {
         let mut cache1 = TopologyCache::new();
         let mut cache2 = TopologyCache::new();
         let empty_merged = FxHashMap::default();
-        let rebuilt_first = rebuild_face_from_split_face(&first, &source_face, &mut cache1, &empty_merged).unwrap();
-        let rebuilt_second = rebuild_face_from_split_face(&second, &source_face, &mut cache2, &empty_merged).unwrap();
+        let mut prov1 = crate::provenance::ProvenanceMap::default();
+        let mut prov2 = crate::provenance::ProvenanceMap::default();
+        let rebuilt_first = rebuild_face_from_split_face(&first, &source_face, &mut cache1, &empty_merged, &mut prov1).unwrap();
+        let rebuilt_second = rebuild_face_from_split_face(&second, &source_face, &mut cache2, &empty_merged, &mut prov2).unwrap();
 
         assert_ne!(rebuilt_first.id(), rebuilt_second.id());
         let first_points: Vec<_> = rebuilt_first.boundaries()[0]

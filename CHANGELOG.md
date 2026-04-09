@@ -17,6 +17,14 @@ The version is of the bottom crate `truck-rendimpl`.
 - **feat(intersect):** Analytical plane-plane intersection fast path with 3D line-segment clipping and local tangent-plane projection for face containment.
 - **feat(trim):** Edge-graph loop construction with left-turn algorithm for face splitting by open section curves.
 - **feat(trim):** `TopologyCache` for shared vertex/edge objects across rebuilt faces, with coordinate-based dedup and canonical ID edge lookup.
+- **fix(trim):** Filter boundary-coincident section curves that lie on a face's existing boundary edges, preventing degenerate face splits in adjacent/touching solid configurations.
+- **fix(trim):** Fuse selection now keeps only Outside-classified faces (excludes OnBoundary), eliminating duplicate internal surfaces at shared boundaries.
+- **fix(trim):** Common selection keeps OnBoundary faces from operand 0 only, avoiding doubled geometry for identical/coincident inputs.
+- **fix(trim):** Multi-operand assembly forces face rebuild through `TopologyCache` to merge cross-operand vertices by coordinate proximity.
+- **fix(pipeline):** Identical-shape fallback: when Fuse/Common selection yields empty but all faces are OnBoundary, return first operand directly.
+- **feat(provenance):** New `provenance` module with `SourceOrigin`, `ProvenanceMap`, `EdgeProvenance`, `FaceProvenance` types — full edge/face origin tracking through boolean operations without modifying `truck-topology` core types.
+- **feat(api):** `common_with_provenance`/`fuse_with_provenance`/`cut_with_provenance` API variants returning `BooleanResult { solids, provenance }`.
+- **feat(trim):** `assemble_shells` now returns `(shells, ProvenanceMap)`, threading edge/face provenance through `TopologyCache` rebuild and original-face reuse paths.
 
 ### Other
 
