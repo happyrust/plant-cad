@@ -1658,7 +1658,30 @@ where
         .chain(section_edges)
         .collect();
 
-    let extracted = extract_loops_from_graph(&all_edges, tolerance);
+    let mut extracted = extract_loops_from_graph(&all_edges, tolerance);
+
+    if extracted.len() > 1 {
+        let areas: Vec<f64> = extracted
+            .iter()
+            .map(|loop_edges| {
+                let points: Vec<Point2> = loop_edges
+                    .iter()
+                    .flat_map(|e| e.points.iter().copied())
+                    .collect();
+                geometry_utils::signed_area(&points).abs()
+            })
+            .collect();
+        if let Some(max_area) = areas.iter().cloned().reduce(f64::max) {
+            let threshold = max_area * 0.99;
+            let mut kept = Vec::new();
+            for (i, loop_edges) in extracted.into_iter().enumerate() {
+                if areas[i] < threshold {
+                    kept.push(loop_edges);
+                }
+            }
+            extracted = kept;
+        }
+    }
 
     extracted
         .into_iter()
@@ -1836,7 +1859,7 @@ fn extract_loops_from_graph(edges: &[UvEdge], tolerance: f64) -> Vec<Vec<UvEdge>
                     turn -= std::f64::consts::TAU;
                 }
 
-                if best.map_or(true, |(_, best_turn)| turn < best_turn) {
+                if best.map_or(true, |(_, best_turn)| turn > best_turn) {
                     best = Some((idx, turn));
                 }
             }
