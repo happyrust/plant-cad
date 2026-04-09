@@ -1,7 +1,8 @@
 //! Edge-Face intersection detection.
 
+use crate::geometry_utils;
 use crate::{bopds::EFInterference, BopDs, EdgeId, FaceId};
-use truck_base::cgmath64::{EuclideanSpace, InnerSpace, MetricSpace, Point2, Point3};
+use truck_base::cgmath64::{EuclideanSpace, MetricSpace, Point2, Point3};
 use truck_geotrait::{
     algo::surface, BoundedCurve, Invertible, ParametricCurve, ParametricSurface,
     ParametricSurface3D, SearchNearestParameter,
@@ -52,7 +53,7 @@ where
                 continue;
             };
             if surface.subs(uv.0, uv.1).distance2(point) <= tolerance_sq
-                && point_projects_inside_face(face, uv, tolerance)
+                && point_projects_inside_face(face, surface, uv, tolerance)
                 && push_unique_intersection(bopds, edge_id, face_id, start, uv, tolerance)
             {
                 count += 1;
@@ -69,7 +70,7 @@ where
                 let point = curve.subs(parameter);
                 let projection = project_point(surface, point, face).map(|uv| {
                     let distance_sq = surface.subs(uv.0, uv.1).distance2(point);
-                    let inside = point_projects_inside_face(face, uv, tolerance);
+                    let inside = point_projects_inside_face(face, surface, uv, tolerance);
                     (uv, distance_sq, inside)
                 });
                 (parameter, projection)
@@ -134,7 +135,7 @@ where
                 continue;
             }
 
-            if !point_projects_inside_face(face, uv, tolerance) {
+            if !point_projects_inside_face(face, surface, uv, tolerance) {
                 continue;
             }
 
@@ -151,7 +152,7 @@ where
                 continue;
             };
             if surface.subs(uv.0, uv.1).distance2(point) <= tolerance_sq
-                && point_projects_inside_face(face, uv, tolerance)
+                && point_projects_inside_face(face, surface, uv, tolerance)
                 && push_unique_intersection(bopds, edge_id, face_id, midpoint, uv, tolerance)
             {
                 count += 1;
@@ -193,7 +194,9 @@ fn project_point<C, S>(
     face: &Face<Point3, C, S>,
 ) -> Option<(f64, f64)>
 where
-    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3>
+    S: Clone
+        + Invertible
+        + SearchNearestParameter<truck_geotrait::D2, Point = Point3>
         + ParametricSurface<Point = Point3>,
     C: Clone,
 {
@@ -229,98 +232,92 @@ fn push_unique_intersection(
 
 fn point_projects_inside_face<C, S>(
     face: &Face<Point3, C, S>,
+    surface: &S,
     parameters: (f64, f64),
     tolerance: f64,
 ) -> bool
 where
     C: Clone,
+    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3>,
 {
     let uv = Point2::new(parameters.0, parameters.1);
-    face.boundaries()
-        .into_iter()
-        .all(|wire| point_on_or_inside_wire(&wire, uv, tolerance))
+    let mut boundaries = face.boundaries().into_iter();
+    let Some(outer) = boundaries.next() else {
+        return false;
+    };
+
+    point_on_or_inside_wire(&outer, surface, uv, tolerance)
+        && boundaries.all(|hole| !point_strictly_inside_wire(&hole, surface, uv, tolerance))
 }
 
-fn point_on_or_inside_wire<C>(
+fn wire_uv_polygon<C, S>(
     wire: &truck_topology::Wire<Point3, C>,
+    surface: &S,
+) -> Vec<Point2>
+where
+    C: Clone,
+    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3>,
+{
+    wire.vertex_iter()
+        .filter_map(|vertex| {
+            surface
+                .search_nearest_parameter(vertex.point(), None, SEARCH_PARAMETER_TRIALS)
+                .map(|(u, v)| Point2::new(u, v))
+        })
+        .collect()
+}
+
+fn point_on_or_inside_wire<C, S>(
+    wire: &truck_topology::Wire<Point3, C>,
+    surface: &S,
     point: Point2,
     tolerance: f64,
 ) -> bool
 where
     C: Clone,
+    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3>,
 {
-    let polygon: Vec<Point2> = wire
-        .vertex_iter()
-        .map(|vertex| Point2::new(vertex.point().x, vertex.point().y))
-        .collect();
-    point_in_polygon(&polygon, point, tolerance)
+    let polygon = wire_uv_polygon(wire, surface);
+    geometry_utils::point_in_or_on_polygon(&polygon, point, tolerance)
 }
 
-fn point_in_polygon(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
-    if polygon.len() < 3 {
-        return false;
-    }
-
-    if polygon
-        .windows(2)
-        .any(|edge| point_on_segment(point, edge[0], edge[1], tolerance))
-        || point_on_segment(
-            point,
-            *polygon.last().expect("polygon has at least 3 vertices"),
-            polygon[0],
-            tolerance,
-        )
-    {
-        return true;
-    }
-
-    let mut inside = false;
-    let mut prev = *polygon.last().expect("polygon has at least 3 vertices");
-    for &curr in polygon {
-        let intersects = ((curr.y > point.y) != (prev.y > point.y))
-            && (point.x
-                < (prev.x - curr.x) * (point.y - curr.y)
-                    / ((prev.y - curr.y).abs().max(f64::EPSILON))
-                    + curr.x);
-        if intersects {
-            inside = !inside;
-        }
-        prev = curr;
-    }
-
-    inside
-}
-
-fn point_on_segment(point: Point2, start: Point2, end: Point2, tolerance: f64) -> bool {
-    let segment = end - start;
-    let to_point = point - start;
-    let length_sq = segment.magnitude2();
-    if length_sq <= f64::EPSILON {
-        return point.distance2(start) <= tolerance * tolerance;
-    }
-
-    let cross = segment.x * to_point.y - segment.y * to_point.x;
-    if cross.abs() > tolerance {
-        return false;
-    }
-
-    let dot = to_point.dot(segment);
-    dot >= -tolerance && dot <= length_sq + tolerance
+fn point_strictly_inside_wire<C, S>(
+    wire: &truck_topology::Wire<Point3, C>,
+    surface: &S,
+    point: Point2,
+    tolerance: f64,
+) -> bool
+where
+    C: Clone,
+    S: SearchNearestParameter<truck_geotrait::D2, Point = Point3>,
+{
+    let polygon = wire_uv_polygon(wire, surface);
+    geometry_utils::point_in_polygon(&polygon, point)
+        && !geometry_utils::point_on_polygon_boundary(&polygon, point, tolerance)
 }
 
 struct SPHint;
 
 impl SPHint {
-    fn from_face<C, S>(face: &Face<Point3, C, S>) -> Option<(f64, f64)> {
+    fn from_face<C, S>(face: &Face<Point3, C, S>) -> Option<(f64, f64)>
+    where
+        C: Clone,
+        S: Clone + Invertible + SearchNearestParameter<truck_geotrait::D2, Point = Point3>,
+    {
         let boundary = face.boundaries().into_iter().next()?;
+        let surface = face.oriented_surface();
         let mut count = 0usize;
         let mut sum_u = 0.0;
         let mut sum_v = 0.0;
         for vertex in boundary.vertex_iter() {
             let point = vertex.point();
-            sum_u += point.x;
-            sum_v += point.y;
-            count += 1;
+            if let Some(uv) =
+                surface.search_nearest_parameter(point, None, SEARCH_PARAMETER_TRIALS)
+            {
+                sum_u += uv.0;
+                sum_v += uv.1;
+                count += 1;
+            }
         }
         (count > 0).then_some((sum_u / count as f64, sum_v / count as f64))
     }

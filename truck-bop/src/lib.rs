@@ -17,14 +17,15 @@ mod bopds;
 mod bounding;
 mod broad_phase;
 mod error;
+pub(crate) mod geometry_utils;
 mod intersect;
 mod options;
 mod pipeline;
 mod trim;
 
 pub use bopds::{
-    BopDs, CommonBlockId, EdgeId, FaceId, MergedVertex, PaveBlock, PaveBlockId, SectionCurveId,
-    SewnEdge, SewnPath, ShapeId, SplitFace, VertexId,
+    BopDs, CommonBlock, CommonBlockId, EdgeId, FaceId, FaceInfo, MergedVertex, PaveBlock,
+    PaveBlockId, SectionCurveId, SewnEdge, SewnPath, ShapeId, SplitFace, VertexId,
 };
 pub use bounding::{BoundingProvider, FaceBoundingSurface};
 pub use broad_phase::{

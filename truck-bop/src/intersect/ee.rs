@@ -43,7 +43,6 @@ where
             t_b,
             tolerance,
         );
-        return Ok(intersections);
     }
 
     for t_a in interior_sample_parameters(range_a, SAMPLE_DIVISION) {

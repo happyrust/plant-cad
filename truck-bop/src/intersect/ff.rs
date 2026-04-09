@@ -1,5 +1,6 @@
 //! Face-Face intersection detection.
 
+use crate::geometry_utils;
 use crate::{bopds::FFInterference, bopds::SectionCurve, BopDs, FaceId, VertexId};
 use truck_base::{
     cgmath64::{MetricSpace, Point2, Point3},
@@ -233,19 +234,7 @@ fn parameter_boundary(face: &Face<Point3, Curve, Surface>) -> Option<Vec<Point2>
     Some(points)
 }
 
-fn signed_area(polyline: &[Point2]) -> f64 {
-    if polyline.len() < 2 {
-        return 0.0;
-    }
-
-    let mut area = 0.0;
-    let mut prev = *polyline.last().unwrap();
-    for &curr in polyline {
-        area += (curr.x + prev.x) * (curr.y - prev.y);
-        prev = curr;
-    }
-    area / 2.0
-}
+fn signed_area(polyline: &[Point2]) -> f64 { geometry_utils::signed_area(polyline) }
 
 fn face_by_id<'a>(
     faces: &'a [(FaceId, Face<Point3, Curve, Surface>)],

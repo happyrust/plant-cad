@@ -4,6 +4,18 @@ The version is of the bottom crate `truck-rendimpl`.
 
 ## Unreleased
 
+### truck-bop
+
+- **feat(pipeline):** General ray-casting point classifier (`classify_point_by_ray_casting`) — three-tier strategy: AABB → ray casting → nearest-face fallback. Enables boolean operations on non-axis-aligned and curved solids.
+- **feat(bopds):** Complete `CommonBlock` implementation with multi-PaveBlock tracking, face association, and PB↔CB mapping in `BopDs`.
+- **feat(bopds):** `FaceInfo` expanded to In/On/Section three-way classification, matching OCCT `BOPDS_FaceInfo` architecture.
+- **feat(bopds):** `PaveBlock` extended with ExtPave intermediate split points, `update()` sub-block generation, and `split_edge` tracking.
+- **fix(intersect):** `ef.rs` `point_projects_inside_face` now properly distinguishes outer wire from holes, aligned with `vf.rs`.
+- **fix(pipeline):** `classify_point_by_nearest_face` merged redundant second shell traversal into single pass.
+- **fix(trim):** `classify_loops` rewritten with containment-tree algorithm supporting multi-level nesting (island-in-hole-in-face).
+
+### Other
+
 - Fix non intersect bboxes has invalid intersects.
 - Fix syntax error when reading binary STL > 8192b.
 - Fillet for a single edge.

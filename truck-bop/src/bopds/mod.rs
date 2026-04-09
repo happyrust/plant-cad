@@ -9,6 +9,8 @@ mod pave;
 mod pave_block;
 pub(crate) mod shape_info;
 
+pub use common_block::CommonBlock;
+pub use face_info::FaceInfo;
 pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
@@ -26,6 +28,33 @@ use truck_base::cgmath64::Point3;
 use truck_geotrait::{BoundedCurve, Invertible, ParametricCurve};
 use truck_topology::Edge;
 
+const SOURCE_BOUNDARY_EDGE_NAMESPACE_START: u32 = 0x8000_0000;
+
+/// Registry that maps source boundary edge keys to stable EdgeIds.
+#[derive(Debug, Default)]
+pub(crate) struct SourceBoundaryEdgeRegistry {
+    ids: FxHashMap<String, EdgeId>,
+    next_id: u32,
+}
+
+impl SourceBoundaryEdgeRegistry {
+    /// Returns the stable EdgeId for the given key, allocating a new one if needed.
+    pub(crate) fn edge_id_for_key(&mut self, key: String) -> EdgeId {
+        if let Some(edge_id) = self.ids.get(&key) {
+            return *edge_id;
+        }
+
+        assert!(
+            self.next_id < SOURCE_BOUNDARY_EDGE_NAMESPACE_START,
+            "source boundary edge registry exhausted"
+        );
+        let edge_id = EdgeId(SOURCE_BOUNDARY_EDGE_NAMESPACE_START | self.next_id);
+        self.next_id += 1;
+        self.ids.insert(key, edge_id);
+        edge_id
+    }
+}
+
 /// Data structure
 #[derive(Debug)]
 pub struct BopDs {
@@ -37,8 +66,13 @@ pub struct BopDs {
     interferences: InterferenceTable,
     paves: Vec<Pave>,
     pave_blocks: Vec<PaveBlock>,
+    common_blocks: Vec<CommonBlock>,
+    pave_block_to_common_block: FxHashMap<PaveBlockId, CommonBlockId>,
+    face_info_pool: FxHashMap<FaceId, FaceInfo>,
     next_section_curve_id: u32,
-    next_generated_vertex_id: u32,
+    next_common_block_id: u32,
+    pub(crate) next_generated_vertex_id: u32,
+    pub(crate) boundary_edge_registry: SourceBoundaryEdgeRegistry,
 }
 
 impl BopDs {
@@ -53,17 +87,39 @@ impl BopDs {
             interferences: InterferenceTable::default(),
             paves: Vec::new(),
             pave_blocks: Vec::new(),
+            common_blocks: Vec::new(),
+            pave_block_to_common_block: FxHashMap::default(),
+            face_info_pool: FxHashMap::default(),
             next_section_curve_id: 0,
+            next_common_block_id: 0,
             next_generated_vertex_id: 1_000_000,
+            boundary_edge_registry: SourceBoundaryEdgeRegistry::default(),
         }
     }
 
     /// Create new BopDs with explicit options.
+    ///
+    /// In debug builds, panics if the options fail validation.
+    /// Use [`BopOptions::validate`] beforehand for explicit error handling.
     pub fn with_options(options: BopOptions) -> Self {
+        debug_assert!(
+            options.validate().is_ok(),
+            "BopDs::with_options called with invalid options: {:?}",
+            options.validate().unwrap_err()
+        );
         Self {
             options,
             ..Self::new()
         }
+    }
+
+    /// Create new BopDs with validated options, returning an error for invalid parameters.
+    pub fn try_with_options(options: BopOptions) -> Result<Self, crate::BopError> {
+        options.validate()?;
+        Ok(Self {
+            options,
+            ..Self::new()
+        })
     }
 
     /// Borrow the configured options.
@@ -190,6 +246,56 @@ impl BopDs {
         id
     }
 
+    // ── CommonBlock management ────────────────────────────────────────────────
+
+    /// Create a new common block for the given pave block, returning its id.
+    pub fn create_common_block(
+        &mut self,
+        pb: PaveBlockId,
+        tolerance: f64,
+    ) -> CommonBlockId {
+        let id = CommonBlockId(self.next_common_block_id);
+        self.next_common_block_id += 1;
+        let cb = CommonBlock::new(pb, tolerance);
+        self.common_blocks.push(cb);
+        self.pave_block_to_common_block.insert(pb, id);
+        id
+    }
+
+    /// Get the common block for a pave block, if any.
+    pub fn common_block_for_pave_block(&self, pb: PaveBlockId) -> Option<CommonBlockId> {
+        self.pave_block_to_common_block.get(&pb).copied()
+    }
+
+    /// Check if a pave block is part of a common block.
+    pub fn is_common_block(&self, pb: PaveBlockId) -> bool {
+        self.pave_block_to_common_block.contains_key(&pb)
+    }
+
+    /// Get a reference to a common block by id.
+    pub fn common_block(&self, id: CommonBlockId) -> Option<&CommonBlock> {
+        self.common_blocks.get(id.0 as usize)
+    }
+
+    /// Get a mutable reference to a common block by id.
+    pub fn common_block_mut(&mut self, id: CommonBlockId) -> Option<&mut CommonBlock> {
+        self.common_blocks.get_mut(id.0 as usize)
+    }
+
+    // ── FaceInfo management ─────────────────────────────────────────────────
+
+    /// Get or create face info for a face.
+    pub fn face_info_mut(&mut self, face: FaceId) -> &mut FaceInfo {
+        self.face_info_pool.entry(face).or_default()
+    }
+
+    /// Get face info for a face, if it exists.
+    pub fn face_info(&self, face: FaceId) -> Option<&FaceInfo> {
+        self.face_info_pool.get(&face)
+    }
+
+    // ── Section curve storage ───────────────────────────────────────────────
+
     /// Store a section curve.
     pub fn push_section_curve(&mut self, section_curve: SectionCurve) {
         self.interferences.push_section_curve(section_curve);
@@ -257,8 +363,8 @@ impl BopDs {
     pub fn pave_blocks_for_edge(&self, edge_id: EdgeId) -> Vec<PaveBlock> {
         self.pave_blocks
             .iter()
-            .copied()
             .filter(|block| block.original_edge == edge_id)
+            .cloned()
             .collect()
     }
 
@@ -613,7 +719,7 @@ mod tests {
             ds.options.parametric_tol,
         ));
 
-        let block = ds.pave_blocks_for_edge(EdgeId(4))[0];
+        let block = ds.pave_blocks_for_edge(EdgeId(4))[0].clone();
         assert_eq!(block.start_vertex, VertexId(40));
         assert_eq!(block.end_vertex, VertexId(41));
         assert_eq!(block.param_range, (0.2, 0.8));

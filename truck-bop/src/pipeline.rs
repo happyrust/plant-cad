@@ -3,8 +3,9 @@
 use crate::BopError;
 use truck_base::{
     bounding_box::BoundingBox,
-    cgmath64::{Point3, Vector3},
+    cgmath64::{InnerSpace, MetricSpace, Point2, Point3, Vector3},
 };
+use truck_geotrait::{Invertible, ParametricSurface, SearchNearestParameter, D2};
 use truck_topology::{Face, Shell, Solid};
 
 /// Boolean operation type
@@ -36,7 +37,11 @@ pub enum PointClassification {
     OnBoundary,
 }
 
-/// Classifies a point against a solid using simplified axis-aligned box logic.
+/// Classifies a point against a solid.
+///
+/// Tries, in order: (1) AABB fast path for axis-aligned boxes,
+/// (2) general ray-casting against parametric faces,
+/// (3) nearest-face normal heuristic as final fallback.
 pub fn classify_point_in_solid<C, S>(
     solid: &Solid<Point3, C, S>,
     point: Point3,
@@ -44,9 +49,29 @@ pub fn classify_point_in_solid<C, S>(
 ) -> Result<PointClassification, BopError>
 where
     C: Clone,
-    S: Clone,
+    S: Clone
+        + Invertible
+        + ParametricSurface<Point = Point3, Vector = Vector3>
+        + SearchNearestParameter<D2, Point = Point3>,
 {
     let shell = expect_single_shell(solid)?;
+
+    if let Ok(result) = classify_point_in_aabb(shell, point, tolerance) {
+        return Ok(result);
+    }
+
+    classify_point_by_ray_casting(shell, point, tolerance)
+}
+
+fn classify_point_in_aabb<C, S>(
+    shell: &Shell<Point3, C, S>,
+    point: Point3,
+    tolerance: f64,
+) -> Result<PointClassification, BopError>
+where
+    C: Clone,
+    S: Clone,
+{
     let bounds = axis_aligned_box_bounds(shell, tolerance)?;
 
     if point_on_box_boundary(point, &bounds, tolerance) {
@@ -63,6 +88,316 @@ where
     } else {
         PointClassification::Outside
     })
+}
+
+const NEAREST_FACE_TRIALS: usize = 100;
+const RAY_NEWTON_MAX_ITERS: usize = 50;
+const RAY_NEWTON_TOL: f64 = 1.0e-10;
+const RAY_UV_SEARCH_TRIALS: usize = 20;
+const RAY_MAX_DIRECTIONS: usize = 3;
+
+// ── Ray-casting point classifier ─────────────────────────────────────────────
+
+fn classify_point_by_ray_casting<C, S>(
+    shell: &Shell<Point3, C, S>,
+    point: Point3,
+    tolerance: f64,
+) -> Result<PointClassification, BopError>
+where
+    C: Clone,
+    S: Clone
+        + Invertible
+        + ParametricSurface<Point = Point3, Vector = Vector3>
+        + SearchNearestParameter<D2, Point = Point3>,
+{
+    if let Some(cls) = boundary_proximity_check(shell, point, tolerance) {
+        return Ok(cls);
+    }
+
+    let directions = [
+        Vector3::new(0.8017, 0.2673, 0.5345).normalize(),
+        Vector3::new(-0.3714, 0.7428, 0.5571).normalize(),
+        Vector3::new(0.4472, -0.8944, 0.0).normalize(),
+    ];
+
+    for direction in &directions[..RAY_MAX_DIRECTIONS] {
+        match try_ray_classify(shell, point, *direction, tolerance) {
+            RayCastOutcome::Classified(cls) => return Ok(cls),
+            RayCastOutcome::Degenerate => continue,
+        }
+    }
+
+    classify_point_by_nearest_face(shell, point, tolerance)
+}
+
+fn boundary_proximity_check<C, S>(
+    shell: &Shell<Point3, C, S>,
+    point: Point3,
+    tolerance: f64,
+) -> Option<PointClassification>
+where
+    C: Clone,
+    S: Clone
+        + Invertible
+        + ParametricSurface<Point = Point3, Vector = Vector3>
+        + SearchNearestParameter<D2, Point = Point3>,
+{
+    for face in shell.face_iter() {
+        let surface = face.oriented_surface();
+        if let Some(uv) = surface.search_nearest_parameter(point, None, NEAREST_FACE_TRIALS) {
+            let closest = surface.subs(uv.0, uv.1);
+            if closest.distance(point) <= tolerance {
+                return Some(PointClassification::OnBoundary);
+            }
+        }
+    }
+    None
+}
+
+enum RayCastOutcome {
+    Classified(PointClassification),
+    Degenerate,
+}
+
+fn try_ray_classify<C, S>(
+    shell: &Shell<Point3, C, S>,
+    origin: Point3,
+    direction: Vector3,
+    tolerance: f64,
+) -> RayCastOutcome
+where
+    C: Clone,
+    S: Clone
+        + Invertible
+        + ParametricSurface<Point = Point3, Vector = Vector3>
+        + SearchNearestParameter<D2, Point = Point3>,
+{
+    let mut all_hits: Vec<f64> = Vec::new();
+
+    for face in shell.face_iter() {
+        let surface = face.oriented_surface();
+        let uv_hints = face_boundary_uv_hints(&face, &surface);
+        let mut face_hits: Vec<f64> = Vec::new();
+
+        for hint in &uv_hints {
+            let Some((t, u, v)) =
+                ray_surface_newton(&surface, origin, direction, hint.0, hint.1)
+            else {
+                continue;
+            };
+
+            if t.abs() <= tolerance {
+                return RayCastOutcome::Degenerate;
+            }
+            if t <= 0.0 {
+                continue;
+            }
+            if face_hits.iter().any(|&h| (h - t).abs() < tolerance) {
+                continue;
+            }
+            if uv_inside_face(&face, &surface, (u, v), tolerance) {
+                face_hits.push(t);
+            }
+        }
+
+        all_hits.extend(face_hits);
+    }
+
+    dedup_hits(&mut all_hits, tolerance);
+
+    RayCastOutcome::Classified(if all_hits.len() % 2 == 1 {
+        PointClassification::Inside
+    } else {
+        PointClassification::Outside
+    })
+}
+
+fn face_boundary_uv_hints<C, S>(
+    face: &Face<Point3, C, S>,
+    surface: &S,
+) -> Vec<(f64, f64)>
+where
+    C: Clone,
+    S: SearchNearestParameter<D2, Point = Point3>,
+{
+    let mut hints = Vec::new();
+    for wire in face.boundaries() {
+        for vertex in wire.vertex_iter() {
+            if let Some(uv) =
+                surface.search_nearest_parameter(vertex.point(), None, RAY_UV_SEARCH_TRIALS)
+            {
+                hints.push(uv);
+            }
+        }
+    }
+    hints
+}
+
+/// Solve surface(u,v) = origin + t * direction via Newton iteration.
+/// Returns (t, u, v) if converged with t > 0.
+fn ray_surface_newton<S>(
+    surface: &S,
+    origin: Point3,
+    direction: Vector3,
+    u0: f64,
+    v0: f64,
+) -> Option<(f64, f64, f64)>
+where
+    S: ParametricSurface<Point = Point3, Vector = Vector3>,
+{
+    let mut u = u0;
+    let mut v = v0;
+    let s0 = surface.subs(u, v);
+    let mut t = (s0 - origin).dot(direction) / direction.magnitude2();
+
+    for _ in 0..RAY_NEWTON_MAX_ITERS {
+        let s = surface.subs(u, v);
+        let residual = s - origin - direction * t;
+        if residual.magnitude2() < RAY_NEWTON_TOL * RAY_NEWTON_TOL {
+            return Some((t, u, v));
+        }
+
+        let su = surface.uder(u, v);
+        let sv = surface.vder(u, v);
+        let nd = -direction;
+
+        let Some((du, dv, dt)) = solve_3x3(su, sv, nd, residual) else {
+            return None;
+        };
+
+        u -= du;
+        v -= dv;
+        t -= dt;
+    }
+    None
+}
+
+/// Solve [col0 | col1 | col2] * x = rhs via Cramer's rule.
+fn solve_3x3(
+    col0: Vector3,
+    col1: Vector3,
+    col2: Vector3,
+    rhs: Vector3,
+) -> Option<(f64, f64, f64)> {
+    let det = col0.dot(col1.cross(col2));
+    if det.abs() < 1.0e-14 {
+        return None;
+    }
+    let inv = 1.0 / det;
+    let x0 = rhs.dot(col1.cross(col2)) * inv;
+    let x1 = col0.dot(rhs.cross(col2)) * inv;
+    let x2 = col0.dot(col1.cross(rhs)) * inv;
+    Some((x0, x1, x2))
+}
+
+/// Check whether `(u, v)` lies inside the face boundary in UV space.
+fn uv_inside_face<C, S>(
+    face: &Face<Point3, C, S>,
+    surface: &S,
+    uv: (f64, f64),
+    tolerance: f64,
+) -> bool
+where
+    C: Clone,
+    S: SearchNearestParameter<D2, Point = Point3>,
+{
+    use crate::geometry_utils;
+    let point = Point2::new(uv.0, uv.1);
+    let mut boundaries = face.boundaries().into_iter();
+
+    let Some(outer) = boundaries.next() else {
+        return false;
+    };
+    let outer_polygon = wire_to_uv_polygon(&outer, surface);
+    if !geometry_utils::point_in_or_on_polygon(&outer_polygon, point, tolerance) {
+        return false;
+    }
+
+    for hole in boundaries {
+        let hole_polygon = wire_to_uv_polygon(&hole, surface);
+        if geometry_utils::point_in_polygon(&hole_polygon, point)
+            && !geometry_utils::point_on_polygon_boundary(&hole_polygon, point, tolerance)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn wire_to_uv_polygon<C, S>(
+    wire: &truck_topology::Wire<Point3, C>,
+    surface: &S,
+) -> Vec<Point2>
+where
+    C: Clone,
+    S: SearchNearestParameter<D2, Point = Point3>,
+{
+    wire.vertex_iter()
+        .filter_map(|vertex| {
+            surface
+                .search_nearest_parameter(vertex.point(), None, RAY_UV_SEARCH_TRIALS)
+                .map(|(u, v)| Point2::new(u, v))
+        })
+        .collect()
+}
+
+fn dedup_hits(hits: &mut Vec<f64>, tolerance: f64) {
+    hits.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    hits.dedup_by(|a, b| (*a - *b).abs() < tolerance);
+}
+
+// ── Nearest-face fallback classifier ────────────────────────────────────────
+
+fn classify_point_by_nearest_face<C, S>(
+    shell: &Shell<Point3, C, S>,
+    point: Point3,
+    tolerance: f64,
+) -> Result<PointClassification, BopError>
+where
+    C: Clone,
+    S: Clone
+        + Invertible
+        + ParametricSurface<Point = Point3, Vector = Vector3>
+        + SearchNearestParameter<D2, Point = Point3>,
+{
+    let mut best_distance = f64::INFINITY;
+    let mut best_normal: Option<Vector3> = None;
+    let mut best_closest: Option<Point3> = None;
+
+    for face in shell.face_iter() {
+        let surface = face.oriented_surface();
+        let Some(uv) = surface.search_nearest_parameter(point, None, NEAREST_FACE_TRIALS) else {
+            continue;
+        };
+
+        let closest = surface.subs(uv.0, uv.1);
+        let dist = closest.distance(point);
+
+        if dist < best_distance {
+            let du = surface.uder(uv.0, uv.1);
+            let dv = surface.vder(uv.0, uv.1);
+            let normal = du.cross(dv);
+            if normal.magnitude2() > f64::EPSILON * f64::EPSILON {
+                best_distance = dist;
+                best_normal = Some(normal.normalize());
+                best_closest = Some(closest);
+            }
+        }
+    }
+
+    let normal = best_normal.ok_or(BopError::UnsupportedGeometry)?;
+    let closest = best_closest.ok_or(BopError::UnsupportedGeometry)?;
+
+    if best_distance <= tolerance {
+        return Ok(PointClassification::OnBoundary);
+    }
+
+    let to_point = point - closest;
+    if to_point.dot(normal) > 0.0 {
+        Ok(PointClassification::Outside)
+    } else {
+        Ok(PointClassification::Inside)
+    }
 }
 
 fn expect_single_shell<C, S>(
@@ -278,7 +613,7 @@ mod tests {
     use super::*;
     use truck_base::{bounding_box::BoundingBox, cgmath64::Point3};
     use truck_modeling::{builder, primitive, Curve, Plane, Surface};
-    use truck_topology::{Edge, Face, Solid, Wire};
+    use truck_topology::{Face, Solid, Wire};
 
     #[test]
     fn boolean_op_debug_name_is_stable() {
@@ -325,7 +660,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known limitation: simplified classifier only supports axis-aligned boxes"]
     fn point_classification_rotated_box_center_is_inside() {
         let solid = rotated_box();
 
@@ -336,100 +670,84 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known limitation: simplified classifier only supports axis-aligned boxes"]
     fn point_classification_rotated_box_face_point_is_boundary() {
         let solid = rotated_box();
 
+        // (0.5, -0.5, 0.5) lies on the side face between v[0](0,-1,0) and v[1](1,0,0)
+        // where the plane equation is x - y = 1
         let classification =
-            classify_point_in_solid(&solid, Point3::new(0.5, 0.0, 0.5), 1.0e-6).unwrap();
+            classify_point_in_solid(&solid, Point3::new(0.5, -0.5, 0.5), 1.0e-6).unwrap();
 
         assert_eq!(classification, PointClassification::OnBoundary);
     }
 
     fn rotated_box() -> Solid<Point3, Curve, Surface> {
-        let bottom = rotated_face(0.0, false);
-        let top = rotated_face(1.0, true);
+        let v = builder::vertices([
+            Point3::new(0.0, -1.0, 0.0),  // 0: bottom
+            Point3::new(1.0, 0.0, 0.0),   // 1
+            Point3::new(0.0, 1.0, 0.0),   // 2
+            Point3::new(-1.0, 0.0, 0.0),  // 3
+            Point3::new(0.0, -1.0, 1.0),  // 4: top
+            Point3::new(1.0, 0.0, 1.0),   // 5
+            Point3::new(0.0, 1.0, 1.0),   // 6
+            Point3::new(-1.0, 0.0, 1.0),  // 7
+        ]);
 
-        let vertices = [
-            Point3::new(0.0, -1.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-            Point3::new(-1.0, 0.0, 0.0),
-            Point3::new(0.0, -1.0, 1.0),
-            Point3::new(1.0, 0.0, 1.0),
-            Point3::new(0.0, 1.0, 1.0),
-            Point3::new(-1.0, 0.0, 1.0),
-        ];
-        let v = builder::vertices(vertices);
-        let e = [
+        let eb = [
             builder::line(&v[0], &v[1]),
             builder::line(&v[1], &v[2]),
             builder::line(&v[2], &v[3]),
             builder::line(&v[3], &v[0]),
+        ];
+        let ev = [
             builder::line(&v[0], &v[4]),
             builder::line(&v[1], &v[5]),
             builder::line(&v[2], &v[6]),
             builder::line(&v[3], &v[7]),
+        ];
+        let et = [
             builder::line(&v[4], &v[5]),
             builder::line(&v[5], &v[6]),
             builder::line(&v[6], &v[7]),
             builder::line(&v[7], &v[4]),
         ];
 
+        let bottom_wire = Wire::from(vec![
+            eb[0].inverse(), eb[3].inverse(), eb[2].inverse(), eb[1].inverse(),
+        ]);
+        let bottom_plane = Plane::new(v[0].point(), v[3].point(), v[1].point());
+        let bottom = Face::new(vec![bottom_wire], Surface::Plane(bottom_plane));
+
+        let top_wire = Wire::from(vec![
+            et[0].clone(), et[1].clone(), et[2].clone(), et[3].clone(),
+        ]);
+        let top_plane = Plane::new(v[4].point(), v[5].point(), v[7].point());
+        let top = Face::new(vec![top_wire], Surface::Plane(top_plane));
+
+        let side = |b: usize, _t: usize| -> Face<Point3, Curve, Surface> {
+            let nb = (b + 1) % 4;
+            let wire = Wire::from(vec![
+                eb[b].clone(),
+                ev[nb].clone(),
+                et[b].inverse(),
+                ev[b].inverse(),
+            ]);
+            let p0 = v[b].point();
+            let p1 = v[nb].point();
+            let p3 = v[b + 4].point();
+            Face::new(vec![wire], Surface::Plane(Plane::new(p0, p1, p3)))
+        };
+
         let shell: Shell<Point3, Curve, Surface> = vec![
             bottom,
-            side_face([e[0].clone(), e[5].clone(), e[8].inverse(), e[4].inverse()]),
-            side_face([e[1].clone(), e[6].clone(), e[9].inverse(), e[5].inverse()]),
-            side_face([e[2].clone(), e[7].clone(), e[10].inverse(), e[6].inverse()]),
-            side_face([e[3].clone(), e[4].clone(), e[11].inverse(), e[7].inverse()]),
+            side(0, 4),
+            side(1, 5),
+            side(2, 6),
+            side(3, 7),
             top,
         ]
         .into();
 
         Solid::new(vec![shell])
-    }
-
-    fn rotated_face(z: f64, top: bool) -> Face<Point3, Curve, Surface> {
-        let wire = rotated_wire(z, top);
-        let plane = Plane::new(
-            Point3::new(0.0, -1.0, z),
-            Point3::new(1.0, 0.0, z),
-            Point3::new(-1.0, 0.0, z),
-        );
-        let face = Face::new(vec![wire], Surface::Plane(plane));
-        if top {
-            face
-        } else {
-            face.inverse()
-        }
-    }
-
-    fn rotated_wire(z: f64, reverse: bool) -> Wire<Point3, Curve> {
-        let vertices = builder::vertices([
-            Point3::new(0.0, -1.0, z),
-            Point3::new(1.0, 0.0, z),
-            Point3::new(0.0, 1.0, z),
-            Point3::new(-1.0, 0.0, z),
-        ]);
-        let edges: Vec<Edge<Point3, Curve>> = vec![
-            builder::line(&vertices[0], &vertices[1]),
-            builder::line(&vertices[1], &vertices[2]),
-            builder::line(&vertices[2], &vertices[3]),
-            builder::line(&vertices[3], &vertices[0]),
-        ];
-        let mut wire = Wire::from(edges);
-        if reverse {
-            wire.invert();
-        }
-        wire
-    }
-
-    fn side_face(edges: [Edge<Point3, Curve>; 4]) -> Face<Point3, Curve, Surface> {
-        let wire = Wire::from(edges.to_vec());
-        let points: Vec<_> = wire.vertex_iter().map(|vertex| vertex.point()).collect();
-        Face::new(
-            vec![wire],
-            Surface::Plane(Plane::new(points[0], points[1], points[3])),
-        )
     }
 }
