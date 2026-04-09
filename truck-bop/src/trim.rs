@@ -1448,27 +1448,81 @@ where
     C: Clone,
     S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
 {
-    let mut loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+    let all_sections: Vec<_> = section_curves
+        .iter()
+        .filter_map(|sc| {
+            sc.face_parameters
+                .iter()
+                .find(|(fid, _)| *fid == face_id)
+                .map(|(_, params)| (sc.id, params.clone()))
+        })
+        .filter(|(_, params)| params.len() >= 2)
+        .collect();
 
-    for section_curve in section_curves {
-        let Some(parameters) = section_curve
-            .face_parameters
-            .iter()
-            .find(|(candidate_face_id, _)| *candidate_face_id == face_id)
-            .map(|(_, parameters)| parameters.clone())
-        else {
-            continue;
-        };
+    if all_sections.is_empty() {
+        let mut loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+        classify_loops(&mut loops);
+        return loops;
+    }
 
-        let closed = close_polyline(parameters, tolerance);
+    let boundary_uv = extract_boundary_uv_points(face, tolerance);
+    let (open_sections, closed_sections): (Vec<_>, Vec<_>) = all_sections
+        .into_iter()
+        .partition(|(_, params)| {
+            let start = params.first().unwrap();
+            let end = params.last().unwrap();
+            let start_on_boundary = point_near_polygon_boundary(&boundary_uv, *start, tolerance * 10.0);
+            let end_on_boundary = point_near_polygon_boundary(&boundary_uv, *end, tolerance * 10.0);
+            start_on_boundary && end_on_boundary
+        });
+
+    let mut loops = if !open_sections.is_empty() {
+        build_loops_via_edge_graph(
+            face_id,
+            face,
+            &open_sections,
+            tolerance,
+            registry,
+            vertex_counter,
+        )
+    } else {
+        Vec::new()
+    };
+
+    if loops.is_empty() && !open_sections.is_empty() {
+        loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+        for (sc_id, parameters) in &open_sections {
+            let closed = close_polyline(parameters.clone(), tolerance);
+            if closed.len() < 4 {
+                continue;
+            }
+            loops.push(loop_from_polyline(
+                face_id,
+                vec![TrimmingEdge {
+                    section_curve: Some(*sc_id),
+                    original_edge: None,
+                    uv_points: closed.clone(),
+                }],
+                closed,
+                tolerance,
+                vertex_counter,
+            ));
+        }
+    }
+
+    if loops.is_empty() {
+        loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+    }
+
+    for (sc_id, parameters) in &closed_sections {
+        let closed = close_polyline(parameters.clone(), tolerance);
         if closed.len() < 4 {
             continue;
         }
-
         loops.push(loop_from_polyline(
             face_id,
             vec![TrimmingEdge {
-                section_curve: Some(section_curve.id),
+                section_curve: Some(*sc_id),
                 original_edge: None,
                 uv_points: closed.clone(),
             }],
@@ -1479,6 +1533,324 @@ where
     }
 
     classify_loops(&mut loops);
+    loops
+}
+
+fn extract_boundary_uv_points<C, S>(
+    face: &Face<Point3, C, S>,
+    tolerance: f64,
+) -> Vec<Point2>
+where
+    C: Clone,
+    S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
+{
+    let surface = face.oriented_surface();
+    let mut points = Vec::new();
+    for wire in face.boundaries() {
+        for vertex in wire.vertex_iter() {
+            let uv = surface
+                .search_parameter(vertex.point(), None, SEARCH_PARAMETER_TRIALS)
+                .map(|(u, v)| Point2::new(u, v));
+            if let Some(uv) = uv {
+                points.push(uv);
+            }
+        }
+    }
+    points
+}
+
+fn point_near_polygon_boundary(polygon: &[Point2], point: Point2, tolerance: f64) -> bool {
+    geometry_utils::point_on_polygon_boundary(polygon, point, tolerance)
+}
+
+// ── Edge-graph based loop construction ──────────────────────────────────────
+
+#[derive(Clone, Debug)]
+struct UvEdge {
+    start: Point2,
+    end: Point2,
+    points: Vec<Point2>,
+    section_curve: Option<SectionCurveId>,
+    original_edge: Option<EdgeId>,
+}
+
+fn build_loops_via_edge_graph<C, S>(
+    face_id: FaceId,
+    face: &Face<Point3, C, S>,
+    relevant_sections: &[(SectionCurveId, Vec<Point2>)],
+    tolerance: f64,
+    registry: &mut crate::bopds::SourceBoundaryEdgeRegistry,
+    vertex_counter: &mut u32,
+) -> Vec<TrimmingLoop>
+where
+    C: Clone,
+    S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
+{
+    let surface = face.oriented_surface();
+    let mut boundary_edges: Vec<UvEdge> = Vec::new();
+
+    for wire in face.boundaries() {
+        let mut hint = None;
+        let mut uv_points = Vec::new();
+        let mut edges_iter: Vec<_> = wire.edge_iter().collect();
+
+        for vertex in wire.vertex_iter() {
+            let point = vertex.point();
+            let uv = surface
+                .search_parameter(point, hint.map(Into::into), SEARCH_PARAMETER_TRIALS)
+                .or_else(|| surface.search_parameter(point, None, SEARCH_PARAMETER_TRIALS));
+            let Some(uv) = uv else {
+                uv_points.clear();
+                break;
+            };
+            let uv = Point2::new(uv.0, uv.1);
+            hint = Some(uv);
+            uv_points.push(uv);
+        }
+
+        if uv_points.len() < 3 {
+            continue;
+        }
+
+        let closed = close_polyline(uv_points.clone(), tolerance);
+        for (i, edge) in edges_iter.iter().enumerate() {
+            let start = closed[i];
+            let end = closed[(i + 1) % (closed.len().max(1))];
+            if i + 1 >= closed.len() {
+                break;
+            }
+            let end = closed[i + 1];
+            boundary_edges.push(UvEdge {
+                start,
+                end,
+                points: vec![start, end],
+                section_curve: None,
+                original_edge: Some(edge_id_from_source_boundary(edge.clone(), registry)),
+            });
+        }
+    }
+
+    if boundary_edges.is_empty() {
+        return Vec::new();
+    }
+
+    let mut section_edges: Vec<UvEdge> = Vec::new();
+    for (sc_id, params) in relevant_sections {
+        if params.len() < 2 {
+            continue;
+        }
+        let start = params[0];
+        let end = *params.last().unwrap();
+        section_edges.push(UvEdge {
+            start,
+            end,
+            points: params.clone(),
+            section_curve: Some(*sc_id),
+            original_edge: None,
+        });
+    }
+
+    let split_boundary = split_boundary_at_section_endpoints(
+        &boundary_edges,
+        &section_edges,
+        tolerance,
+    );
+
+    let all_edges: Vec<UvEdge> = split_boundary
+        .into_iter()
+        .chain(section_edges)
+        .collect();
+
+    let extracted = extract_loops_from_graph(&all_edges, tolerance);
+
+    extracted
+        .into_iter()
+        .map(|loop_edges| {
+            let mut uv_points = Vec::new();
+            let mut trimming_edges = Vec::new();
+
+            for edge in &loop_edges {
+                if uv_points.is_empty() {
+                    uv_points.extend(edge.points.iter().copied());
+                } else {
+                    uv_points.extend(edge.points.iter().skip(1).copied());
+                }
+                trimming_edges.push(TrimmingEdge {
+                    section_curve: edge.section_curve,
+                    original_edge: edge.original_edge,
+                    uv_points: edge.points.clone(),
+                });
+            }
+
+            loop_from_polyline(face_id, trimming_edges, uv_points, tolerance, vertex_counter)
+        })
+        .collect()
+}
+
+fn split_boundary_at_section_endpoints(
+    boundary_edges: &[UvEdge],
+    section_edges: &[UvEdge],
+    tolerance: f64,
+) -> Vec<UvEdge> {
+    use truck_base::cgmath64::MetricSpace;
+
+    let mut endpoints: Vec<Point2> = Vec::new();
+    for se in section_edges {
+        endpoints.push(se.start);
+        endpoints.push(se.end);
+    }
+
+    let mut result = Vec::new();
+    for edge in boundary_edges {
+        let mut split_ts: Vec<f64> = Vec::new();
+        let dx = edge.end.x - edge.start.x;
+        let dy = edge.end.y - edge.start.y;
+        let len_sq = dx * dx + dy * dy;
+
+        if len_sq < tolerance * tolerance {
+            result.push(edge.clone());
+            continue;
+        }
+
+        for ep in &endpoints {
+            let t = ((ep.x - edge.start.x) * dx + (ep.y - edge.start.y) * dy) / len_sq;
+            if t > tolerance && t < 1.0 - tolerance {
+                let proj = Point2::new(edge.start.x + t * dx, edge.start.y + t * dy);
+                if proj.distance(*ep) < tolerance {
+                    split_ts.push(t);
+                }
+            }
+        }
+
+        if split_ts.is_empty() {
+            result.push(edge.clone());
+            continue;
+        }
+
+        split_ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        split_ts.dedup_by(|a, b| (*a - *b).abs() < tolerance);
+
+        let mut prev_t = 0.0;
+        let mut prev_point = edge.start;
+        for t in &split_ts {
+            let point = Point2::new(edge.start.x + t * dx, edge.start.y + t * dy);
+            result.push(UvEdge {
+                start: prev_point,
+                end: point,
+                points: vec![prev_point, point],
+                section_curve: None,
+                original_edge: edge.original_edge,
+            });
+            prev_point = point;
+            prev_t = *t;
+        }
+        result.push(UvEdge {
+            start: prev_point,
+            end: edge.end,
+            points: vec![prev_point, edge.end],
+            section_curve: None,
+            original_edge: edge.original_edge,
+        });
+    }
+
+    result
+}
+
+fn extract_loops_from_graph(edges: &[UvEdge], tolerance: f64) -> Vec<Vec<UvEdge>> {
+    use truck_base::cgmath64::MetricSpace;
+
+    let mut vertices: Vec<Point2> = Vec::new();
+    let mut vertex_index = |p: Point2| -> usize {
+        for (i, v) in vertices.iter().enumerate() {
+            if v.distance(p) < tolerance {
+                return i;
+            }
+        }
+        vertices.push(p);
+        vertices.len() - 1
+    };
+
+    let mut directed: Vec<(usize, usize, UvEdge)> = Vec::new();
+    for edge in edges {
+        let si = vertex_index(edge.start);
+        let ei = vertex_index(edge.end);
+        if si != ei {
+            directed.push((si, ei, edge.clone()));
+            let mut rev = edge.clone();
+            rev.start = edge.end;
+            rev.end = edge.start;
+            rev.points = edge.points.iter().rev().copied().collect();
+            directed.push((ei, si, rev));
+        }
+    }
+
+    let mut used = vec![false; directed.len()];
+    let mut loops = Vec::new();
+
+    for start_idx in 0..directed.len() {
+        if used[start_idx] {
+            continue;
+        }
+        let start_vi = directed[start_idx].0;
+        let mut chain = vec![start_idx];
+        let mut current_vi = directed[start_idx].1;
+        used[start_idx] = true;
+
+        let max_steps = directed.len();
+        for _ in 0..max_steps {
+            if current_vi == start_vi {
+                let loop_edges: Vec<UvEdge> = chain
+                    .iter()
+                    .map(|&idx| directed[idx].2.clone())
+                    .collect();
+                loops.push(loop_edges);
+                break;
+            }
+
+            let prev_edge_idx = *chain.last().unwrap();
+            let prev_dir = {
+                let e = &directed[prev_edge_idx];
+                let d = Point2::new(
+                    vertices[e.1].x - vertices[e.0].x,
+                    vertices[e.1].y - vertices[e.0].y,
+                );
+                f64::atan2(d.y, d.x)
+            };
+
+            let mut best: Option<(usize, f64)> = None;
+            for (idx, (si, _ei, _)) in directed.iter().enumerate() {
+                if used[idx] || *si != current_vi {
+                    continue;
+                }
+                let d = Point2::new(
+                    vertices[directed[idx].1].x - vertices[current_vi].x,
+                    vertices[directed[idx].1].y - vertices[current_vi].y,
+                );
+                let angle = f64::atan2(d.y, d.x);
+                let mut turn = prev_dir - angle + std::f64::consts::PI;
+                while turn < 0.0 {
+                    turn += std::f64::consts::TAU;
+                }
+                while turn >= std::f64::consts::TAU {
+                    turn -= std::f64::consts::TAU;
+                }
+
+                if best.map_or(true, |(_, best_turn)| turn < best_turn) {
+                    best = Some((idx, turn));
+                }
+            }
+
+            match best {
+                Some((next_idx, _)) => {
+                    used[next_idx] = true;
+                    chain.push(next_idx);
+                    current_vi = directed[next_idx].1;
+                }
+                None => break,
+            }
+        }
+    }
+
     loops
 }
 
