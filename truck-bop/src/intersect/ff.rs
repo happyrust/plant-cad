@@ -231,7 +231,8 @@ fn clip_line_to_face_3d(
 
         let p_on_line = line_origin + line_dir * t;
         let p_on_seg = a + seg * s;
-        if p_on_line.distance(p_on_seg) < tolerance * 10.0 {
+        let dist = p_on_line.distance(p_on_seg);
+        if dist < tolerance * 10.0 {
             ts.push(t);
         }
     }
@@ -257,26 +258,47 @@ fn point_near_face_3d(
     point: Point3,
     tolerance: f64,
 ) -> bool {
-    use truck_geotrait::SearchParameter;
-    let surface = face.oriented_surface();
-    let Some((u, v)) = surface.search_parameter(point, None, 100) else {
-        return false;
-    };
-    let uv = Point2::new(u, v);
+    use truck_base::cgmath64::InnerSpace;
 
-    let mut boundary_uv: Vec<Point2> = Vec::new();
+    let mut boundary_3d: Vec<Point3> = Vec::new();
     for wire in face.boundaries() {
         for vertex in wire.vertex_iter() {
-            if let Some((vu, vv)) = surface.search_parameter(vertex.point(), None, 100) {
-                boundary_uv.push(Point2::new(vu, vv));
-            }
+            boundary_3d.push(vertex.point());
         }
     }
-    if boundary_uv.len() < 3 {
+    if boundary_3d.len() < 3 {
         return false;
     }
 
-    geometry_utils::point_in_or_on_polygon(&boundary_uv, uv, tolerance)
+    let centroid = {
+        let sum: Point3 = boundary_3d.iter().fold(
+            Point3::new(0.0, 0.0, 0.0),
+            |acc, p| Point3::new(acc.x + p.x, acc.y + p.y, acc.z + p.z),
+        );
+        let n = boundary_3d.len() as f64;
+        Point3::new(sum.x / n, sum.y / n, sum.z / n)
+    };
+
+    let e0 = boundary_3d[1] - boundary_3d[0];
+    let e1 = boundary_3d[2] - boundary_3d[0];
+    let normal = e0.cross(e1);
+    if normal.magnitude2() < 1.0e-30 {
+        return false;
+    }
+    let normal = normal.normalize();
+
+    let u_axis = e0.normalize();
+    let v_axis = normal.cross(u_axis).normalize();
+
+    let project = |p: Point3| -> Point2 {
+        let d = p - centroid;
+        Point2::new(d.dot(u_axis), d.dot(v_axis))
+    };
+
+    let polygon_2d: Vec<Point2> = boundary_3d.iter().map(|p| project(*p)).collect();
+    let point_2d = project(point);
+
+    geometry_utils::point_in_or_on_polygon(&polygon_2d, point_2d, tolerance)
 }
 
 #[allow(dead_code)]
