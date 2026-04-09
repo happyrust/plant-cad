@@ -13,6 +13,7 @@ The version is of the bottom crate `truck-rendimpl`.
 - **fix(intersect):** `ef.rs` `point_projects_inside_face` now properly distinguishes outer wire from holes, aligned with `vf.rs`.
 - **fix(pipeline):** `classify_point_by_nearest_face` merged redundant second shell traversal into single pass.
 - **fix(trim):** `classify_loops` rewritten with containment-tree algorithm supporting multi-level nesting (island-in-hole-in-face).
+- **feat(api):** Top-level `common`/`fuse`/`cut` functions wired to full boolean pipeline: shape registration → broad phase → 6-level intersection → trim → classify → select → merge → sew → assemble → build solids.
 
 ### Other
 
