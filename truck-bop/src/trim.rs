@@ -1465,15 +1465,12 @@ where
         return loops;
     }
 
-    let boundary_uv = extract_boundary_uv_points(face, tolerance);
     let (open_sections, closed_sections): (Vec<_>, Vec<_>) = all_sections
         .into_iter()
         .partition(|(_, params)| {
-            let start = params.first().unwrap();
-            let end = params.last().unwrap();
-            let start_on_boundary = point_near_polygon_boundary(&boundary_uv, *start, tolerance * 10.0);
-            let end_on_boundary = point_near_polygon_boundary(&boundary_uv, *end, tolerance * 10.0);
-            start_on_boundary && end_on_boundary
+            let closed = close_polyline(params.clone(), tolerance);
+            let area = geometry_utils::signed_area(&closed).abs();
+            area < tolerance * tolerance
         });
 
     let mut loops = if !open_sections.is_empty() {

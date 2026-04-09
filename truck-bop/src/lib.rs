@@ -77,6 +77,19 @@ fn run_boolean_pipeline(
     let candidates =
         generate_candidate_pairs(&all_vertices, &all_edges, &all_faces, ds.options());
 
+    let cross_operand = |id_a, id_b| -> bool {
+        let rank_a = ds.face_shape_info(id_a).map(|si| si.operand_rank);
+        let rank_b = ds.face_shape_info(id_b).map(|si| si.operand_rank);
+        rank_a.is_some() && rank_b.is_some() && rank_a != rank_b
+    };
+
+    let cross_ff: Vec<_> = candidates
+        .ff
+        .iter()
+        .copied()
+        .filter(|&(a, b)| cross_operand(a, b))
+        .collect();
+
     intersect_vv(&mut ds, &all_vertices, &candidates.vv);
     intersect_ve(&mut ds, &all_vertices, &all_edges, &candidates.ve);
     intersect_vf(&mut ds, &all_vertices, &all_faces, &candidates.vf);
@@ -90,7 +103,7 @@ fn run_boolean_pipeline(
     }
 
     intersect_ef(&mut ds, &all_edges, &all_faces, &candidates.ef);
-    intersect_ff(&mut ds, &all_faces, &candidates.ff);
+    intersect_ff(&mut ds, &all_faces, &cross_ff);
 
     build_trimming_loops(&mut ds, &all_faces);
     build_split_faces(&mut ds);
