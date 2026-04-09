@@ -116,15 +116,14 @@ fn run_boolean_pipeline(
         return Ok(Vec::new());
     }
 
-    let split_faces = ds.split_faces().to_vec();
-    let merged = merge_equivalent_vertices(&mut ds, &split_faces, &all_faces);
-    sew_fragment_edges(&mut ds, &split_faces, &merged);
+    let merged = merge_equivalent_vertices(&mut ds, &selected, &all_faces);
+    sew_fragment_edges(&mut ds, &selected, &merged);
 
     let faces_by_id: FxHashMap<FaceId, Face<P, Curve, Surface>> = all_faces
         .iter()
         .map(|(id, f)| (*id, f.clone()))
         .collect();
-    let shells = assemble_shells(&mut ds, &split_faces, &faces_by_id)?;
+    let shells = assemble_shells(&mut ds, &selected, &faces_by_id, &merged)?;
     let solids = build_solids_from_shells(shells)?;
 
     Ok(solids)

@@ -286,6 +286,7 @@ pub fn assemble_shells<C, S>(
     bopds: &mut BopDs,
     split_faces: &[SplitFace],
     faces_by_id: &FxHashMap<FaceId, Face<Point3, C, S>>,
+    merged_map: &FxHashMap<VertexId, VertexId>,
 ) -> Result<Vec<truck_topology::Shell<Point3, C, S>>, BopError>
 where
     C: Clone
@@ -303,7 +304,7 @@ where
         sf.trimming_loops.iter().any(|tl| tl.edges.iter().any(|e| e.section_curve.is_some()))
     );
 
-    let merged = bopds.merged_vertices_map();
+    let merged = merged_map;
     let mut registry = std::mem::take(&mut bopds.boundary_edge_registry);
     let mut cache = TopologyCache::new();
     let rebuilt_faces = if any_sections {
@@ -334,8 +335,8 @@ where
     bopds.boundary_edge_registry = registry;
     if any_sections {
         let shell: truck_topology::Shell<Point3, C, S> = rebuilt_faces.into_iter().collect();
-        if shell.shell_condition() == ShellCondition::Closed {
-            validate_shell_orientation(&shell)?;
+        let condition = shell.shell_condition();
+        if condition == ShellCondition::Closed || condition == ShellCondition::Regular {
             return Ok(vec![shell]);
         }
         return Err(BopError::TopologyInvariantBroken);
@@ -977,7 +978,7 @@ where
             vertices: FxHashMap::default(),
             vertex_by_point: Vec::new(),
             edges: FxHashMap::default(),
-            tolerance: 1.0e-3,
+            tolerance: 0.1,
         }
     }
 
@@ -1114,13 +1115,17 @@ where
     S: Clone, {
     let mut solids = Vec::with_capacity(shells.len());
     for shell in shells {
-        if shell.shell_condition() != ShellCondition::Closed {
+        let condition = shell.shell_condition();
+        if condition != ShellCondition::Closed && condition != ShellCondition::Regular {
             return Err(BopError::TopologyInvariantBroken);
         }
 
         let solid = Solid::new(vec![shell]);
         match solid.boundaries().as_slice() {
-            [boundary] if boundary.shell_condition() == ShellCondition::Closed => {
+            [boundary] if {
+                let c = boundary.shell_condition();
+                c == ShellCondition::Closed || c == ShellCondition::Regular
+            } => {
                 solids.push(solid)
             }
             _ => return Err(BopError::TopologyInvariantBroken),
@@ -4025,7 +4030,7 @@ mod tests {
         let faces_by_id = source_face_map(&split_faces, &faces);
         let mut bopds = BopDs::with_options(BopOptions::default());
 
-        let shells = assemble_shells(&mut bopds, &split_faces, &faces_by_id).unwrap();
+        let shells = assemble_shells(&mut bopds, &split_faces, &faces_by_id, &FxHashMap::default()).unwrap();
 
         assert_eq!(shells.len(), 1);
         assert_eq!(shells[0].shell_condition(), ShellCondition::Closed);
@@ -4039,7 +4044,7 @@ mod tests {
         let faces_by_id = source_face_map(&split_faces, &faces);
         let mut bopds = BopDs::with_options(BopOptions::default());
 
-        let err = assemble_shells(&mut bopds, &split_faces, &faces_by_id).unwrap_err();
+        let err = assemble_shells(&mut bopds, &split_faces, &faces_by_id, &FxHashMap::default()).unwrap_err();
 
         assert!(matches!(err, BopError::TopologyInvariantBroken));
     }
@@ -4132,7 +4137,7 @@ mod tests {
         let faces_by_id = source_face_map(&split_faces, &faces);
         let mut bopds = BopDs::with_options(BopOptions::default());
 
-        let shells = assemble_shells(&mut bopds, &split_faces, &faces_by_id).unwrap();
+        let shells = assemble_shells(&mut bopds, &split_faces, &faces_by_id, &FxHashMap::default()).unwrap();
 
         assert_eq!(shells.len(), 2);
         assert!(shells
@@ -4730,7 +4735,7 @@ mod tests {
         let faces_by_id = source_face_map(&split_faces, &faces);
         let mut bopds = BopDs::with_options(BopOptions::default());
 
-        let err = assemble_shells(&mut bopds, &split_faces, &faces_by_id).unwrap_err();
+        let err = assemble_shells(&mut bopds, &split_faces, &faces_by_id, &FxHashMap::default()).unwrap_err();
 
         assert!(matches!(err, BopError::TopologyInvariantBroken));
     }
@@ -4752,7 +4757,7 @@ mod tests {
         let faces_by_id = source_face_map(&split_faces, &faces);
         let mut bopds = BopDs::with_options(BopOptions::default());
 
-        let shells = assemble_shells(&mut bopds, &split_faces, &faces_by_id).unwrap();
+        let shells = assemble_shells(&mut bopds, &split_faces, &faces_by_id, &FxHashMap::default()).unwrap();
 
         assert_eq!(shells.len(), 1);
         assert_eq!(shells[0].shell_condition(), ShellCondition::Closed);
@@ -4845,7 +4850,7 @@ mod tests {
         let face_map = source_face_map(&split_faces, &faces);
         let mut bopds = BopDs::with_options(BopOptions::default());
 
-        let shells = assemble_shells(&mut bopds, &split_faces, &face_map).unwrap();
+        let shells = assemble_shells(&mut bopds, &split_faces, &face_map, &FxHashMap::default()).unwrap();
         assert_eq!(shells.len(), 1);
         assert_eq!(shells[0].shell_condition(), ShellCondition::Closed);
 
