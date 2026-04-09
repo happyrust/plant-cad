@@ -1120,7 +1120,7 @@ where
             return Err(BopError::TopologyInvariantBroken);
         }
 
-        let solid = Solid::new(vec![shell]);
+        let solid = Solid::new_unchecked(vec![shell]);
         match solid.boundaries().as_slice() {
             [boundary] if {
                 let c = boundary.shell_condition();

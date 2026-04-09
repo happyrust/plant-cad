@@ -224,7 +224,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "end-to-end pipeline — depends on full intersect chain"]
     fn overlapping_boxes_fuse() {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
