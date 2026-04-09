@@ -14,6 +14,9 @@ The version is of the bottom crate `truck-rendimpl`.
 - **fix(pipeline):** `classify_point_by_nearest_face` merged redundant second shell traversal into single pass.
 - **fix(trim):** `classify_loops` rewritten with containment-tree algorithm supporting multi-level nesting (island-in-hole-in-face).
 - **feat(api):** Top-level `common`/`fuse`/`cut` functions wired to full boolean pipeline: shape registration → broad phase → 6-level intersection → trim → classify → select → merge → sew → assemble → build solids.
+- **feat(intersect):** Analytical plane-plane intersection fast path with 3D line-segment clipping and local tangent-plane projection for face containment.
+- **feat(trim):** Edge-graph loop construction with left-turn algorithm for face splitting by open section curves.
+- **feat(trim):** `TopologyCache` for shared vertex/edge objects across rebuilt faces, with coordinate-based dedup and canonical ID edge lookup.
 
 ### Other
 
