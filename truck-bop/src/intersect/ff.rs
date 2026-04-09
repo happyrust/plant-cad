@@ -182,14 +182,18 @@ fn clip_line_to_face_uv(
     line_origin: Point3,
     line_dir: truck_base::cgmath64::Vector3,
     face: &Face<Point3, Curve, Surface>,
-    plane: &truck_modeling::Plane,
+    _plane: &truck_modeling::Plane,
     tolerance: f64,
 ) -> Vec<(f64, f64)> {
+    use truck_geotrait::SearchParameter;
+    let surface = face.oriented_surface();
+
     let mut uv_vertices: Vec<Point2> = Vec::new();
     for wire in face.boundaries() {
         for vertex in wire.vertex_iter() {
-            let params = plane.get_parameter(vertex.point());
-            uv_vertices.push(Point2::new(params.x, params.y));
+            if let Some((u, v)) = surface.search_parameter(vertex.point(), None, 100) {
+                uv_vertices.push(Point2::new(u, v));
+            }
         }
     }
 
@@ -197,10 +201,16 @@ fn clip_line_to_face_uv(
         return Vec::new();
     }
 
-    let lo_params = plane.get_parameter(line_origin);
-    let ld_params = plane.get_parameter(line_origin + line_dir) - lo_params;
-    let lo_uv = Point2::new(lo_params.x, lo_params.y);
-    let ld_uv = Point2::new(ld_params.x, ld_params.y);
+    let lo_uv = match surface.search_parameter(line_origin, None, 100) {
+        Some((u, v)) => Point2::new(u, v),
+        None => return Vec::new(),
+    };
+    let tip = line_origin + line_dir;
+    let tip_uv = match surface.search_parameter(tip, None, 100) {
+        Some((u, v)) => Point2::new(u, v),
+        None => return Vec::new(),
+    };
+    let ld_uv = Point2::new(tip_uv.x - lo_uv.x, tip_uv.y - lo_uv.y);
 
     let mut ts: Vec<f64> = Vec::new();
 
