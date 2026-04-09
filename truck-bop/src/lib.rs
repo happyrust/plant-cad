@@ -104,7 +104,6 @@ fn run_boolean_pipeline(
 
     intersect_ef(&mut ds, &all_edges, &all_faces, &candidates.ef);
     intersect_ff(&mut ds, &all_faces, &cross_ff);
-
     build_trimming_loops(&mut ds, &all_faces);
     build_split_faces(&mut ds);
 

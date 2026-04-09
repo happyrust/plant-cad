@@ -128,8 +128,8 @@ fn try_analytical_plane_plane(
 
     let line_origin = find_point_on_two_planes(&plane0, &plane1, n0, n1, direction)?;
 
-    let t_ranges_0 = clip_line_to_face_uv(line_origin, direction, face0, &plane0, tolerance);
-    let t_ranges_1 = clip_line_to_face_uv(line_origin, direction, face1, &plane1, tolerance);
+    let t_ranges_0 = clip_line_to_face_3d(line_origin, direction, face0, tolerance);
+    let t_ranges_1 = clip_line_to_face_3d(line_origin, direction, face1, tolerance);
 
     let intersected = intersect_ranges(&t_ranges_0, &t_ranges_1);
     if intersected.is_empty() {
@@ -178,6 +178,108 @@ fn find_point_on_two_planes(
     Some(Point3::new(0.0, 0.0, 0.0) + n0 * c0 + n1 * c1)
 }
 
+fn clip_line_to_face_3d(
+    line_origin: Point3,
+    line_dir: truck_base::cgmath64::Vector3,
+    face: &Face<Point3, Curve, Surface>,
+    tolerance: f64,
+) -> Vec<(f64, f64)> {
+    use truck_base::cgmath64::{InnerSpace, MetricSpace};
+
+    let mut boundary_points: Vec<Point3> = Vec::new();
+    for wire in face.boundaries() {
+        for vertex in wire.vertex_iter() {
+            boundary_points.push(vertex.point());
+        }
+    }
+    if boundary_points.len() < 3 {
+        return Vec::new();
+    }
+
+    let dir_len_sq = line_dir.dot(line_dir);
+    if dir_len_sq < 1.0e-30 {
+        return Vec::new();
+    }
+
+    let mut ts: Vec<f64> = Vec::new();
+    let n = boundary_points.len();
+    for i in 0..n {
+        let a = boundary_points[i];
+        let b = boundary_points[(i + 1) % n];
+        let seg = b - a;
+        let seg_len_sq = seg.dot(seg);
+        if seg_len_sq < 1.0e-30 {
+            continue;
+        }
+
+        let w = line_origin - a;
+        let d_dot_seg = line_dir.dot(seg);
+        let denom = dir_len_sq * seg_len_sq - d_dot_seg * d_dot_seg;
+        if denom.abs() < 1.0e-20 {
+            continue;
+        }
+
+        let w_dot_d = w.dot(line_dir);
+        let w_dot_seg = w.dot(seg);
+        let t = (d_dot_seg * w_dot_seg - seg_len_sq * w_dot_d) / denom;
+        let s = (dir_len_sq * w_dot_seg - d_dot_seg * w_dot_d) / denom;
+
+        if s < -tolerance || s > 1.0 + tolerance {
+            continue;
+        }
+        let s = s.clamp(0.0, 1.0);
+
+        let p_on_line = line_origin + line_dir * t;
+        let p_on_seg = a + seg * s;
+        if p_on_line.distance(p_on_seg) < tolerance * 10.0 {
+            ts.push(t);
+        }
+    }
+
+    ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ts.dedup_by(|a, b| (*a - *b).abs() < tolerance);
+
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i + 1 < ts.len() {
+        let mid_t = (ts[i] + ts[i + 1]) / 2.0;
+        let mid_point = line_origin + line_dir * mid_t;
+        if point_near_face_3d(face, mid_point, tolerance * 10.0) {
+            ranges.push((ts[i], ts[i + 1]));
+        }
+        i += 1;
+    }
+    ranges
+}
+
+fn point_near_face_3d(
+    face: &Face<Point3, Curve, Surface>,
+    point: Point3,
+    tolerance: f64,
+) -> bool {
+    use truck_geotrait::SearchParameter;
+    let surface = face.oriented_surface();
+    let Some((u, v)) = surface.search_parameter(point, None, 100) else {
+        return false;
+    };
+    let uv = Point2::new(u, v);
+
+    let mut boundary_uv: Vec<Point2> = Vec::new();
+    for wire in face.boundaries() {
+        for vertex in wire.vertex_iter() {
+            if let Some((vu, vv)) = surface.search_parameter(vertex.point(), None, 100) {
+                boundary_uv.push(Point2::new(vu, vv));
+            }
+        }
+    }
+    if boundary_uv.len() < 3 {
+        return false;
+    }
+
+    geometry_utils::point_in_or_on_polygon(&boundary_uv, uv, tolerance)
+}
+
+#[allow(dead_code)]
 fn clip_line_to_face_uv(
     line_origin: Point3,
     line_dir: truck_base::cgmath64::Vector3,
