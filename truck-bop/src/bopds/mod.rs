@@ -407,6 +407,17 @@ impl BopDs {
     /// Borrow all stored pave blocks.
     pub fn pave_blocks(&self) -> &[PaveBlock] { &self.pave_blocks }
 
+    /// Build a map from original vertex IDs to their canonical (merged) vertex ID.
+    pub fn merged_vertices_map(&self) -> FxHashMap<VertexId, VertexId> {
+        let mut map = FxHashMap::default();
+        for merged in self.merged_vertices() {
+            for &original in &merged.original_vertices {
+                map.insert(original, merged.id);
+            }
+        }
+        map
+    }
+
     /// Clear previously computed merged vertex clusters.
     pub fn clear_merged_vertices(&mut self) { self.interferences.merged_vertices.clear(); }
 

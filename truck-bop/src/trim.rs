@@ -278,6 +278,10 @@ pub fn sew_fragment_edges(
 }
 
 /// Assembles oriented split faces into closed shell components.
+///
+/// When `force_rebuild` is true, all faces are rebuilt through a shared
+/// TopologyCache to ensure cross-operand edge sharing. Set to false when
+/// testing with faces that already have valid shared topology.
 pub fn assemble_shells<C, S>(
     bopds: &mut BopDs,
     split_faces: &[SplitFace],
@@ -295,26 +299,38 @@ where
         + SearchNearestParameter<D2, Point = Point3>,
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
+    let any_sections = split_faces.iter().any(|sf|
+        sf.trimming_loops.iter().any(|tl| tl.edges.iter().any(|e| e.section_curve.is_some()))
+    );
+
+    let merged = bopds.merged_vertices_map();
     let mut registry = std::mem::take(&mut bopds.boundary_edge_registry);
-    let rebuilt_faces =
+    let mut cache = TopologyCache::new();
+    let rebuilt_faces = if any_sections {
         split_faces
             .iter()
             .map(|split_face| {
                 let original_face = faces_by_id.get(&split_face.original_face).ok_or(
                     BopError::InternalInvariant("missing source face for split face"),
                 )?;
-                let face = if split_face_can_reuse_original_face(
-                    split_face,
-                    original_face,
-                    &mut registry,
-                ) {
-                    original_face.clone()
-                } else {
-                    rebuild_face_from_split_face(split_face, original_face)?
-                };
-                Ok(face)
+                rebuild_face_from_split_face(split_face, original_face, &mut cache, &merged)
             })
-            .collect::<Result<Vec<_>, BopError>>()?;
+            .collect::<Result<Vec<_>, BopError>>()?
+    } else {
+        split_faces
+            .iter()
+            .map(|split_face| {
+                let original_face = faces_by_id.get(&split_face.original_face).ok_or(
+                    BopError::InternalInvariant("missing source face for split face"),
+                )?;
+                if split_face_can_reuse_original_face(split_face, original_face, &mut registry) {
+                    Ok(original_face.clone())
+                } else {
+                    rebuild_face_from_split_face(split_face, original_face, &mut cache, &merged)
+                }
+            })
+            .collect::<Result<Vec<_>, BopError>>()?
+    };
     bopds.boundary_edge_registry = registry;
     let sewn_faces = sew_shell_faces(split_faces, rebuilt_faces)?;
     let mut shells = Vec::new();
@@ -935,9 +951,78 @@ fn scale_vector(vector: Vector3, scale: f64) -> Vector3 {
     Vector3::new(vector.x * scale, vector.y * scale, vector.z * scale)
 }
 
+// ── Topology cache for shared vertex/edge objects ───────────────────────────
+
+struct TopologyCache<C> {
+    vertices: FxHashMap<VertexId, truck_topology::Vertex<Point3>>,
+    vertex_by_point: Vec<(Point3, VertexId)>,
+    edges: FxHashMap<(VertexId, VertexId), truck_topology::Edge<Point3, C>>,
+    tolerance: f64,
+}
+
+impl<C> TopologyCache<C>
+where
+    C: Clone + Invertible,
+    truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
+{
+    fn new() -> Self {
+        Self {
+            vertices: FxHashMap::default(),
+            vertex_by_point: Vec::new(),
+            edges: FxHashMap::default(),
+            tolerance: 1.0e-3,
+        }
+    }
+
+    /// Returns (canonical_vertex_id, vertex_object).
+    fn get_or_create_vertex(&mut self, id: VertexId, point: Point3) -> (VertexId, truck_topology::Vertex<Point3>) {
+        use truck_base::cgmath64::MetricSpace;
+
+        if let Some(v) = self.vertices.get(&id) {
+            return (id, v.clone());
+        }
+
+        let match_id = self.vertex_by_point
+            .iter()
+            .find(|(ep, _)| ep.distance(point) < self.tolerance)
+            .map(|(_, eid)| *eid);
+
+        if let Some(existing_id) = match_id {
+            let v = self.vertices.get(&existing_id).unwrap().clone();
+            self.vertices.insert(id, v.clone());
+            return (existing_id, v);
+        }
+
+        let vertex = truck_modeling::builder::vertex(point);
+        self.vertices.insert(id, vertex.clone());
+        self.vertex_by_point.push((point, id));
+        (id, vertex)
+    }
+
+    fn get_or_create_edge(
+        &mut self,
+        start_id: VertexId,
+        end_id: VertexId,
+        start: &truck_topology::Vertex<Point3>,
+        end: &truck_topology::Vertex<Point3>,
+    ) -> truck_topology::Edge<Point3, C> {
+        if let Some(edge) = self.edges.get(&(start_id, end_id)) {
+            return edge.clone();
+        }
+        if let Some(edge) = self.edges.get(&(end_id, start_id)) {
+            return edge.inverse();
+        }
+        let edge = truck_modeling::builder::line(start, end);
+        self.edges.insert((start_id, end_id), edge.clone());
+        edge
+    }
+}
+
 fn rebuild_face_from_split_face<C, S>(
     split_face: &SplitFace,
     original_face: &Face<Point3, C, S>,
+    cache: &mut TopologyCache<C>,
+    merged: &FxHashMap<VertexId, VertexId>,
 ) -> Result<Face<Point3, C, S>, BopError>
 where
     C: Clone
@@ -954,7 +1039,7 @@ where
     let boundaries = split_face
         .trimming_loops
         .iter()
-        .map(|trimming_loop| rebuild_wire_from_trimming_loop(trimming_loop, &surface))
+        .map(|trimming_loop| rebuild_wire_from_trimming_loop(trimming_loop, &surface, cache, merged))
         .collect::<Result<Vec<_>, _>>()?;
 
     if boundaries.is_empty() {
@@ -967,6 +1052,8 @@ where
 fn rebuild_wire_from_trimming_loop<C, S>(
     trimming_loop: &TrimmingLoop,
     surface: &S,
+    cache: &mut TopologyCache<C>,
+    merged: &FxHashMap<VertexId, VertexId>,
 ) -> Result<truck_topology::Wire<Point3, C>, BopError>
 where
     C: Clone
@@ -978,22 +1065,34 @@ where
         + Invertible,
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
-    let vertices = open_polygon_vertices(&trimming_loop.uv_points);
-    if vertices.len() < 3 {
+    let uv_verts = open_polygon_vertices(&trimming_loop.uv_points);
+    if uv_verts.len() < 3 {
         return Err(BopError::TopologyInvariantBroken);
     }
 
-    let vertex_points = vertices
-        .iter()
-        .copied()
-        .map(|uv| surface.subs(uv.x, uv.y))
-        .collect::<Vec<_>>();
-    let vertices = truck_modeling::builder::vertices(vertex_points);
-    let mut edges = Vec::with_capacity(vertices.len());
-    for index in 0..vertices.len() {
-        let start = &vertices[index];
-        let end = &vertices[(index + 1) % vertices.len()];
-        edges.push(truck_modeling::builder::line(start, end));
+    let open_vertex_ids = if trimming_loop.vertex_ids.len() >= 2
+        && trimming_loop.vertex_ids.first() == trimming_loop.vertex_ids.last()
+    {
+        &trimming_loop.vertex_ids[..trimming_loop.vertex_ids.len() - 1]
+    } else {
+        &trimming_loop.vertex_ids
+    };
+
+    let vid_count = open_vertex_ids.len().min(uv_verts.len());
+    let mut topo_vertices = Vec::with_capacity(vid_count);
+    for i in 0..vid_count {
+        let point = surface.subs(uv_verts[i].x, uv_verts[i].y);
+        let input_id = merged.get(&open_vertex_ids[i]).copied().unwrap_or(open_vertex_ids[i]);
+        let (canonical_id, vertex) = cache.get_or_create_vertex(input_id, point);
+        topo_vertices.push((canonical_id, vertex));
+    }
+
+    let mut edges = Vec::with_capacity(vid_count);
+    for i in 0..vid_count {
+        let next = (i + 1) % vid_count;
+        let (sid, start) = &topo_vertices[i];
+        let (eid, end) = &topo_vertices[next];
+        edges.push(cache.get_or_create_edge(*sid, *eid, start, end));
     }
 
     Ok(truck_topology::Wire::from(edges))
@@ -3992,7 +4091,9 @@ mod tests {
                 if split_face_can_reuse_original_face(split_face, original_face, &mut registry) {
                     original_face.clone()
                 } else {
-                    rebuild_face_from_split_face(split_face, original_face).unwrap()
+                    let mut cache = TopologyCache::new();
+                    let empty_merged = FxHashMap::default();
+                    rebuild_face_from_split_face(split_face, original_face, &mut cache, &empty_merged).unwrap()
                 }
             })
             .collect::<Vec<_>>();
@@ -4670,8 +4771,11 @@ mod tests {
             classification: Some(PointClassification::OnBoundary),
         };
 
-        let rebuilt_first = rebuild_face_from_split_face(&first, &source_face).unwrap();
-        let rebuilt_second = rebuild_face_from_split_face(&second, &source_face).unwrap();
+        let mut cache1 = TopologyCache::new();
+        let mut cache2 = TopologyCache::new();
+        let empty_merged = FxHashMap::default();
+        let rebuilt_first = rebuild_face_from_split_face(&first, &source_face, &mut cache1, &empty_merged).unwrap();
+        let rebuilt_second = rebuild_face_from_split_face(&second, &source_face, &mut cache2, &empty_merged).unwrap();
 
         assert_ne!(rebuilt_first.id(), rebuilt_second.id());
         let first_points: Vec<_> = rebuilt_first.boundaries()[0]
