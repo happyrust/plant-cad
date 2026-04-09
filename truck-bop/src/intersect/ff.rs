@@ -142,13 +142,10 @@ fn try_analytical_plane_plane(
         if len < tolerance {
             continue;
         }
-        let n_samples = ((len / tolerance).ceil() as usize).clamp(2, 50);
-        let samples: Vec<Point3> = (0..n_samples)
-            .map(|i| {
-                let t = t_start + len * (i as f64) / ((n_samples - 1) as f64);
-                line_origin + direction * t
-            })
-            .collect();
+        let samples = vec![
+            line_origin + direction * *t_start,
+            line_origin + direction * *t_end,
+        ];
         curves.push(samples);
     }
 

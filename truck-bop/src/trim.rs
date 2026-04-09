@@ -1713,7 +1713,7 @@ fn split_boundary_at_section_endpoints(
             let t = ((ep.x - edge.start.x) * dx + (ep.y - edge.start.y) * dy) / len_sq;
             if t > tolerance && t < 1.0 - tolerance {
                 let proj = Point2::new(edge.start.x + t * dx, edge.start.y + t * dy);
-                if proj.distance(*ep) < tolerance {
+                if proj.distance(*ep) < tolerance * 100.0 {
                     split_ts.push(t);
                 }
             }
@@ -1727,19 +1727,22 @@ fn split_boundary_at_section_endpoints(
         split_ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
         split_ts.dedup_by(|a, b| (*a - *b).abs() < tolerance);
 
-        let mut prev_t = 0.0;
         let mut prev_point = edge.start;
         for t in &split_ts {
-            let point = Point2::new(edge.start.x + t * dx, edge.start.y + t * dy);
+            let on_edge = Point2::new(edge.start.x + t * dx, edge.start.y + t * dy);
+            let snap_point = endpoints
+                .iter()
+                .find(|ep| ep.distance(on_edge) < tolerance * 100.0)
+                .copied()
+                .unwrap_or(on_edge);
             result.push(UvEdge {
                 start: prev_point,
-                end: point,
-                points: vec![prev_point, point],
+                end: snap_point,
+                points: vec![prev_point, snap_point],
                 section_curve: None,
                 original_edge: edge.original_edge,
             });
-            prev_point = point;
-            prev_t = *t;
+            prev_point = snap_point;
         }
         result.push(UvEdge {
             start: prev_point,
@@ -1756,10 +1759,11 @@ fn split_boundary_at_section_endpoints(
 fn extract_loops_from_graph(edges: &[UvEdge], tolerance: f64) -> Vec<Vec<UvEdge>> {
     use truck_base::cgmath64::MetricSpace;
 
+    let merge_tol = tolerance * 100.0;
     let mut vertices: Vec<Point2> = Vec::new();
     let mut vertex_index = |p: Point2| -> usize {
         for (i, v) in vertices.iter().enumerate() {
-            if v.distance(p) < tolerance {
+            if v.distance(p) < merge_tol {
                 return i;
             }
         }
