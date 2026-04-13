@@ -315,7 +315,7 @@ where
 
     let merged = merged_map;
     let mut registry = std::mem::take(&mut bopds.boundary_edge_registry);
-    let mut cache = TopologyCache::new();
+    let mut cache = TopologyCache::with_tolerance(bopds.options().geometric_tol);
     let rebuilt_faces = if force_rebuild {
         split_faces
             .iter()
@@ -998,11 +998,15 @@ where
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
     fn new() -> Self {
+        Self::with_tolerance(1.0e-6)
+    }
+
+    fn with_tolerance(tolerance: f64) -> Self {
         Self {
             vertices: FxHashMap::default(),
             vertex_by_point: Vec::new(),
             edges: FxHashMap::default(),
-            tolerance: 0.1,
+            tolerance,
         }
     }
 

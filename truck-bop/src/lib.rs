@@ -128,9 +128,13 @@ fn run_boolean_pipeline(
         let all_boundary = ds.split_faces().iter().all(|sf|
             sf.classification == Some(PointClassification::OnBoundary));
         if all_boundary && !ds.split_faces().is_empty() {
+            let mut prov = ProvenanceMap::default();
+            for sf in ds.split_faces() {
+                prov.record_face(sf.original_face, sf.operand_rank);
+            }
             return Ok(BooleanResult {
                 solids: vec![a.clone()],
-                provenance: ProvenanceMap::default(),
+                provenance: prov,
             });
         }
         return Ok(BooleanResult {

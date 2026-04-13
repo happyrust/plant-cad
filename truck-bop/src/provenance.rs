@@ -70,7 +70,10 @@ impl ProvenanceMap {
         } else {
             (end, start)
         };
-        self.edges.entry(key).or_default().push(source);
+        let sources = self.edges.entry(key).or_default();
+        if !sources.contains(&source) {
+            sources.push(source);
+        }
     }
 
     /// Look up provenance for an edge by its canonical vertex pair.
