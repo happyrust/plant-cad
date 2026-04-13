@@ -113,13 +113,22 @@ pub struct SplitFace {
     pub classification: Option<PointClassification>,
 }
 
+/// Provenance of a trimming edge: which input entity it originates from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TrimmingEdgeSource {
+    /// Edge comes from an original face boundary in the input solid.
+    OriginalBoundaryEdge(EdgeId),
+    /// Edge comes from an intersection section curve.
+    SectionCurve(SectionCurveId),
+    /// Edge has no traceable source (e.g. synthesized during loop repair).
+    Unattributed,
+}
+
 /// A trimming edge represented in a face's parameter space.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrimmingEdge {
-    /// Optional source section curve for synthesized trimming edges.
-    pub section_curve: Option<SectionCurveId>,
-    /// Optional source boundary edge identifier when the edge comes from a real face boundary.
-    pub original_edge: Option<EdgeId>,
+    /// Where this edge originates from.
+    pub source: TrimmingEdgeSource,
     /// Polyline vertices in face UV space.
     pub uv_points: Vec<Point2>,
 }
@@ -441,8 +450,7 @@ mod tests {
             face: FaceId(1),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(2)),
-                original_edge: None,
+                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(2)),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -466,8 +474,7 @@ mod tests {
             face: FaceId(1),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(2)),
-                original_edge: None,
+                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(2)),
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![

@@ -14,8 +14,8 @@ pub use face_info::FaceInfo;
 pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
-    SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge, TrimmingLoop,
-    VEInterference, VFInterference, VVInterference,
+    SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,
+    TrimmingEdgeSource, TrimmingLoop, VEInterference, VFInterference, VVInterference,
 };
 pub use pave::Pave;
 pub use pave_block::PaveBlock;
@@ -921,8 +921,7 @@ mod tests {
             face: FaceId(3),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                section_curve: Some(SectionCurveId(0)),
-                original_edge: None,
+                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(0)),
                 uv_points: vec![
                     truck_base::cgmath64::Point2::new(0.0, 0.0),
                     truck_base::cgmath64::Point2::new(1.0, 0.0),
@@ -952,8 +951,7 @@ mod tests {
                 face: FaceId(3),
                 vertex_ids: vec![VertexId(1), VertexId(2)],
                 edges: vec![TrimmingEdge {
-                    section_curve: Some(SectionCurveId(0)),
-                    original_edge: None,
+                    source: TrimmingEdgeSource::SectionCurve(SectionCurveId(0)),
                     uv_points: vec![
                         truck_base::cgmath64::Point2::new(0.0, 0.0),
                         truck_base::cgmath64::Point2::new(1.0, 0.0),

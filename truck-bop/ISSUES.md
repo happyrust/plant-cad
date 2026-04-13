@@ -70,55 +70,12 @@ Use `surface.search_parameter(vertex.point(), ...)` to obtain actual UV coordina
 
 ---
 
-## Issue 3 — P0: `classify_point_in_solid` 仅支持轴对齐盒体
+## Issue 3 — ~~P0: `classify_point_in_solid` 仅支持轴对齐盒体~~ ✅ RESOLVED
 
-**Title:** `[truck-bop] P0: classify_point_in_solid only works for axis-aligned boxes`
-
-**Labels:** `bug`, `enhancement`
-
-### Problem
-
-The current `classify_point_in_solid` implementation uses bounding-box containment to determine if a point is inside a solid. This only gives correct results for axis-aligned rectangular solids.
-
-For general solids (spheres, cylinders, swept bodies, etc.), the classifier must use ray-casting or winding-number algorithms that test against the solid's actual boundary faces.
-
-### Proposed Fix
-
-Implement a ray-casting approach:
-1. Cast a ray from the query point in an arbitrary direction
-2. Count intersections with each boundary face of the solid
-3. Odd count → inside, even count → outside
-4. Handle edge cases (ray tangent to face, ray through edge/vertex)
-
-### Impact
-
-**Blocking** — boolean operations on any non-box solid produce incorrect results.
+已实现三层分类器：AABB 快速路径 → Newton ray-casting → nearest-face 法向量回退。旋转 box 测试通过。
 
 ---
 
-## Issue 4 — P1: `vertex_ids_for_polyline` 使用算术公式生成 ID，存在冲突风险
+## Issue 4 — ~~P1: `vertex_ids_for_polyline` 使用算术公式生成 ID~~ ✅ RESOLVED
 
-**Title:** `[truck-bop] P1: vertex_ids_for_polyline generates IDs via arithmetic formula — collision risk`
-
-**Labels:** `enhancement`
-
-### Problem
-
-In `trim.rs`, `vertex_ids_for_polyline` generates `VertexId` values using:
-
-```rust
-VertexId(face_id.0 * 10_000 + seed * 100 + index as u32)
-```
-
-This arithmetic scheme can collide with:
-- IDs from `BopDs::next_generated_vertex_id` (starts at 1,000,000)
-- IDs from other faces when `face_id.0 >= 100`
-- IDs from different seeds when vertex count exceeds 100
-
-### Proposed Fix
-
-Thread `&mut BopDs` through `build_loops_for_face` → `boundary_loops` → `loop_from_polyline` → `vertex_ids_for_polyline` and use `BopDs::next_generated_vertex_id` for allocation. This ensures globally unique IDs across all generation paths.
-
-### Impact
-
-Low probability in practice but causes hard-to-debug topology corruption when triggered.
+已改为共享单调递增计数器 `vertex_counter: &mut u32`，由 `build_trimming_loops` 从 `bopds.next_generated_vertex_id` 取出并写回。
