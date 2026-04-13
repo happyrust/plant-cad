@@ -5,6 +5,14 @@
 
 ---
 
+## 架构总览
+
+![Trim Pipeline](diagrams/trim-pipeline.svg)
+
+![Data Model](diagrams/trim-data-model.svg)
+
+---
+
 ## 1. 模块定位
 
 Trim 模块位于布尔运算流水线的中间层，负责将交集检测产生的 section curves 转化为拓扑 fragment，再交给 shell 装配层组装成闭合壳体。

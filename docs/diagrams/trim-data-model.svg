@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="dia" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+      <path d="M5,0 L10,5 L5,10 L0,5 Z" fill="#2563eb"/>
+    </marker>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 16px; font-weight: 600; fill: #111827; }
+      .cls-name { font-size: 14px; font-weight: 600; fill: #111827; }
+      .field { font-size: 12px; fill: #374151; font-family: 'Menlo', 'Consolas', monospace; }
+      .enum-val { font-size: 11px; fill: #6b7280; font-family: 'Menlo', 'Consolas', monospace; }
+      .relation { font-size: 11px; fill: #6b7280; }
+    </style>
+  </defs>
+
+  <rect width="960" height="560" fill="#ffffff"/>
+  <text x="480" y="28" text-anchor="middle" class="title">Trim Layer Data Model</text>
+
+  <!-- TrimmingEdgeSource enum -->
+  <rect x="30" y="50" width="260" height="130" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <rect x="30" y="50" width="260" height="28" rx="8" fill="#2563eb"/>
+  <rect x="30" y="70" width="260" height="2" fill="#2563eb"/>
+  <text x="160" y="70" text-anchor="middle" fill="#ffffff" class="cls-name">«enum» TrimmingEdgeSource</text>
+  <text x="40" y="100" class="enum-val">OriginalBoundaryEdge(EdgeId)</text>
+  <text x="40" y="118" class="enum-val">SectionCurve(SectionCurveId)</text>
+  <text x="40" y="136" class="enum-val">Unattributed</text>
+
+  <!-- TrimmingEdge -->
+  <rect x="350" y="50" width="240" height="90" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <rect x="350" y="50" width="240" height="28" rx="8" fill="#374151"/>
+  <rect x="350" y="70" width="240" height="2" fill="#374151"/>
+  <text x="470" y="70" text-anchor="middle" fill="#ffffff" class="cls-name">TrimmingEdge</text>
+  <text x="360" y="100" class="field">source: TrimmingEdgeSource</text>
+  <text x="360" y="118" class="field">uv_points: Vec&lt;Point2&gt;</text>
+
+  <line x1="290" y1="100" x2="348" y2="100" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="310" y="94" class="relation">1</text>
+
+  <!-- TrimmingLoop -->
+  <rect x="350" y="180" width="240" height="140" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <rect x="350" y="180" width="240" height="28" rx="8" fill="#374151"/>
+  <rect x="350" y="200" width="240" height="2" fill="#374151"/>
+  <text x="470" y="200" text-anchor="middle" fill="#ffffff" class="cls-name">TrimmingLoop</text>
+  <text x="360" y="228" class="field">face: FaceId</text>
+  <text x="360" y="246" class="field">vertex_ids: Vec&lt;VertexId&gt;</text>
+  <text x="360" y="264" class="field">edges: Vec&lt;TrimmingEdge&gt;</text>
+  <text x="360" y="282" class="field">uv_points: Vec&lt;Point2&gt;</text>
+  <text x="360" y="300" class="field">signed_area / is_outer</text>
+
+  <line x1="470" y1="140" x2="470" y2="178" stroke="#2563eb" stroke-width="1.5" marker-start="url(#dia)" marker-end="url(#arr)"/>
+  <text x="478" y="162" class="relation">1..*</text>
+
+  <!-- SplitFace -->
+  <rect x="660" y="180" width="270" height="140" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <rect x="660" y="180" width="270" height="28" rx="8" fill="#374151"/>
+  <rect x="660" y="200" width="270" height="2" fill="#374151"/>
+  <text x="795" y="200" text-anchor="middle" fill="#ffffff" class="cls-name">SplitFace</text>
+  <text x="670" y="228" class="field">original_face: FaceId</text>
+  <text x="670" y="246" class="field">operand_rank: u8</text>
+  <text x="670" y="264" class="field">trimming_loops: Vec&lt;Loop&gt;</text>
+  <text x="670" y="282" class="field">splitting_edges: Vec&lt;ScId&gt;</text>
+  <text x="670" y="300" class="field">classification: Option&lt;..&gt;</text>
+
+  <line x1="590" y1="250" x2="658" y2="250" stroke="#2563eb" stroke-width="1.5" marker-start="url(#dia)" marker-end="url(#arr)"/>
+  <text x="618" y="244" class="relation">1..*</text>
+
+  <!-- CanonicalRebuiltEdge -->
+  <rect x="30" y="220" width="260" height="130" rx="8" fill="#faf5ff" stroke="#9333ea" stroke-width="1.5"/>
+  <rect x="30" y="220" width="260" height="28" rx="8" fill="#9333ea"/>
+  <rect x="30" y="240" width="260" height="2" fill="#9333ea"/>
+  <text x="160" y="240" text-anchor="middle" fill="#ffffff" class="cls-name">«enum» CanonicalRebuiltEdge</text>
+  <text x="40" y="270" class="enum-val">OriginalEdge(EdgeId)</text>
+  <text x="40" y="288" class="enum-val">SectionSegment(ScId, V, V)</text>
+  <text x="40" y="306" class="enum-val">SharedBoundary(V, V)</text>
+  <text x="40" y="324" class="enum-val">OpenBoundary(FaceId, V, V)</text>
+
+  <!-- SewnEdge -->
+  <rect x="350" y="370" width="240" height="140" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <rect x="350" y="370" width="240" height="28" rx="8" fill="#374151"/>
+  <rect x="350" y="390" width="240" height="2" fill="#374151"/>
+  <text x="470" y="390" text-anchor="middle" fill="#ffffff" class="cls-name">SewnEdge</text>
+  <text x="360" y="418" class="field">source: SewnEdgeSource</text>
+  <text x="360" y="436" class="field">start_vertex / end_vertex</text>
+  <text x="360" y="454" class="field">reversed: bool</text>
+  <text x="360" y="472" class="field">section_curve: Option&lt;ScId&gt;</text>
+  <text x="360" y="490" class="field">sewn_pair: Option&lt;Pair&gt;</text>
+
+  <line x1="470" y1="320" x2="470" y2="368" stroke="#9333ea" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="478" y="345" class="relation">derives</text>
+
+  <!-- ProvenanceMap -->
+  <rect x="660" y="370" width="270" height="110" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <rect x="660" y="370" width="270" height="28" rx="8" fill="#16a34a"/>
+  <rect x="660" y="390" width="270" height="2" fill="#16a34a"/>
+  <text x="795" y="390" text-anchor="middle" fill="#ffffff" class="cls-name">ProvenanceMap</text>
+  <text x="670" y="418" class="field">faces: Vec&lt;FaceProvenance&gt;</text>
+  <text x="670" y="436" class="field">edges: HashMap&lt;(V,V), Sources&gt;</text>
+  <text x="670" y="454" class="field">merged_vertices: HashMap</text>
+
+  <line x1="590" y1="440" x2="658" y2="440" stroke="#16a34a" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="618" y="434" class="relation">tracks</text>
+
+  <!-- Relationship labels -->
+  <text x="160" y="200" text-anchor="middle" class="relation">‘ used by canonical_rebuilt_edge()</text>
+</svg>
