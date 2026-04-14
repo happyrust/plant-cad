@@ -346,7 +346,8 @@ where
     bopds.boundary_edge_registry = registry;
 
     let raw_shells: Vec<Vec<Face<Point3, C, S>>> = if force_rebuild {
-        vec![rebuilt_faces]
+        sew_shell_faces(split_faces, rebuilt_faces.clone())
+            .unwrap_or_else(|_| vec![rebuilt_faces])
     } else {
         sew_shell_faces(split_faces, rebuilt_faces)?
     };
@@ -546,11 +547,7 @@ fn canonical_edges_share_identity(
     lhs: &CanonicalRebuiltEdge,
     rhs: &CanonicalRebuiltEdge,
 ) -> bool {
-    match (lhs, rhs) {
-        (CanonicalRebuiltEdge::SectionSegment(sc_a, _, _),
-         CanonicalRebuiltEdge::SectionSegment(sc_b, _, _)) => sc_a == sc_b,
-        _ => lhs == rhs,
-    }
+    lhs == rhs
 }
 
 fn split_faces_share_vertex(lhs: &SplitFace, rhs: &SplitFace) -> bool {

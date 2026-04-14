@@ -131,9 +131,19 @@ fn run_boolean_pipeline(
         let all_boundary = ds.split_faces().iter().all(|sf|
             sf.classification == Some(PointClassification::OnBoundary));
         if all_boundary && !ds.split_faces().is_empty() {
-            let prov = provenance_for_passthrough(a, &ds);
+            let passthrough_solid = match operation {
+                BooleanOp::Common | BooleanOp::Fuse => a.clone(),
+                BooleanOp::Cut => a.clone(),
+                BooleanOp::Section => {
+                    return Ok(BooleanResult {
+                        solids: Vec::new(),
+                        provenance: ProvenanceMap::default(),
+                    });
+                }
+            };
+            let prov = provenance_for_passthrough(&passthrough_solid, &ds);
             return Ok(BooleanResult {
-                solids: vec![a.clone()],
+                solids: vec![passthrough_solid],
                 provenance: prov,
             });
         }
