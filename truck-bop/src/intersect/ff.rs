@@ -152,6 +152,63 @@ fn try_analytical_plane_plane(
     Some(curves)
 }
 
+#[allow(dead_code)]
+fn coplanar_face_overlap_curves(
+    face0: &Face<Point3, Curve, Surface>,
+    face1: &Face<Point3, Curve, Surface>,
+    plane: &truck_modeling::Plane,
+    normal: truck_base::cgmath64::Vector3,
+    tolerance: f64,
+) -> Option<Vec<Vec<Point3>>> {
+    use truck_base::cgmath64::InnerSpace;
+
+    let origin = plane.origin();
+    let u_axis = {
+        let ref_dir = if normal.x.abs() < 0.9 {
+            truck_base::cgmath64::Vector3::unit_x()
+        } else {
+            truck_base::cgmath64::Vector3::unit_y()
+        };
+        normal.cross(ref_dir).normalize()
+    };
+    let v_axis = normal.cross(u_axis).normalize();
+
+    let project = |p: Point3| -> Point2 {
+        let d = p - origin;
+        Point2::new(d.dot(u_axis), d.dot(v_axis))
+    };
+
+    let boundary_2d = |face: &Face<Point3, Curve, Surface>| -> Vec<Point2> {
+        face.boundaries()
+            .into_iter()
+            .next()
+            .map(|wire| wire.vertex_iter().map(|v| project(v.point())).collect())
+            .unwrap_or_default()
+    };
+
+    let poly0 = boundary_2d(face0);
+    let poly1 = boundary_2d(face1);
+
+    if poly0.len() < 3 || poly1.len() < 3 {
+        return Some(Vec::new());
+    }
+
+    let mut overlap_edges: Vec<Vec<Point3>> = Vec::new();
+    for i in 0..poly1.len() {
+        let a = poly1[i];
+        let b = poly1[(i + 1) % poly1.len()];
+        if geometry_utils::point_in_or_on_polygon(&poly0, a, tolerance)
+            || geometry_utils::point_in_or_on_polygon(&poly0, b, tolerance)
+        {
+            let a3 = origin + u_axis * a.x + v_axis * a.y;
+            let b3 = origin + u_axis * b.x + v_axis * b.y;
+            overlap_edges.push(vec![a3, b3]);
+        }
+    }
+
+    Some(overlap_edges)
+}
+
 fn find_point_on_two_planes(
     plane0: &truck_modeling::Plane,
     plane1: &truck_modeling::Plane,
