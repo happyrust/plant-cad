@@ -643,6 +643,7 @@ fn canonical_loop_edges(trimming_loop: &TrimmingLoop) -> Vec<CanonicalRebuiltEdg
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 enum CanonicalRebuiltEdge {
     OriginalEdge(EdgeId),
     SectionSegment(SectionCurveId, VertexId, VertexId),
@@ -671,15 +672,12 @@ fn canonical_rebuilt_edge(
             CanonicalRebuiltEdge::OriginalEdge(edge_id)
         }
         TrimmingEdgeSource::Unattributed => {
-            if edge_is_shared_non_section(edge, start, end) {
-                CanonicalRebuiltEdge::SharedBoundary(undirected.0, undirected.1)
-            } else {
-                CanonicalRebuiltEdge::OpenBoundary(face, undirected.0, undirected.1)
-            }
+            CanonicalRebuiltEdge::OpenBoundary(face, undirected.0, undirected.1)
         }
     }
 }
 
+#[allow(dead_code)]
 fn edge_is_shared_non_section(edge: &TrimmingEdge, start: VertexId, end: VertexId) -> bool {
     if edge.uv_points.len() <= 2 {
         return false;
