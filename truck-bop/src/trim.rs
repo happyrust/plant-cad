@@ -347,10 +347,14 @@ where
     if force_rebuild {
         let shell: truck_topology::Shell<Point3, C, S> = rebuilt_faces.into_iter().collect();
         let condition = shell.shell_condition();
-        if condition == ShellCondition::Closed || condition == ShellCondition::Regular {
-            return Ok((vec![shell], prov));
+        match condition {
+            ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {
+                return Ok((vec![shell], prov));
+            }
+            _ => {
+                return Err(BopError::TopologyInvariantBroken);
+            }
         }
-        return Err(BopError::TopologyInvariantBroken);
     }
 
     let sewn_faces = sew_shell_faces(split_faces, rebuilt_faces)?;
