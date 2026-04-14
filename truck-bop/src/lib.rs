@@ -127,6 +127,7 @@ fn run_boolean_pipeline(
     classify_split_faces_against_operand(&mut ds, &solids_by_operand, &all_faces)?;
 
     let selected = select_split_faces_for_boolean_op(&ds, operation);
+    let selected = remove_coplanar_duplicates(selected, &all_faces, ds.options().geometric_tol);
     if selected.is_empty() {
         let all_boundary = ds.split_faces().iter().all(|sf|
             sf.classification == Some(PointClassification::OnBoundary));
@@ -197,6 +198,64 @@ fn register_solid_shapes(
     }
 
     (vertices, edges, faces)
+}
+
+fn remove_coplanar_duplicates(
+    selected: Vec<SplitFace>,
+    all_faces: &[(FaceId, Face<P, Curve, Surface>)],
+    tolerance: f64,
+) -> Vec<SplitFace> {
+    use truck_base::cgmath64::InnerSpace;
+
+    let face_normal = |face_id: FaceId| -> Option<(truck_base::cgmath64::Vector3, Point3)> {
+        let face = all_faces.iter().find(|(id, _)| *id == face_id)?.1.clone();
+        match face.oriented_surface() {
+            Surface::Plane(p) => Some((p.normal(), p.origin())),
+            _ => None,
+        }
+    };
+
+    let mut to_remove = vec![false; selected.len()];
+
+    for i in 0..selected.len() {
+        if to_remove[i] {
+            continue;
+        }
+        let Some((n_i, o_i)) = face_normal(selected[i].original_face) else {
+            continue;
+        };
+        for j in (i + 1)..selected.len() {
+            if to_remove[j] {
+                continue;
+            }
+            if selected[i].operand_rank == selected[j].operand_rank {
+                continue;
+            }
+            let Some((n_j, o_j)) = face_normal(selected[j].original_face) else {
+                continue;
+            };
+            let cross = n_i.cross(n_j);
+            if cross.magnitude2() > tolerance * tolerance {
+                continue;
+            }
+            let dist = n_i.dot(o_j - o_i).abs();
+            if dist > tolerance {
+                continue;
+            }
+            if selected[j].operand_rank > selected[i].operand_rank {
+                to_remove[j] = true;
+            } else {
+                to_remove[i] = true;
+            }
+        }
+    }
+
+    selected
+        .into_iter()
+        .enumerate()
+        .filter(|(idx, _)| !to_remove[*idx])
+        .map(|(_, sf)| sf)
+        .collect()
 }
 
 fn provenance_for_passthrough(
