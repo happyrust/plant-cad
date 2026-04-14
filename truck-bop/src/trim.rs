@@ -346,8 +346,7 @@ where
     bopds.boundary_edge_registry = registry;
 
     let raw_shells: Vec<Vec<Face<Point3, C, S>>> = if force_rebuild {
-        sew_shell_faces(split_faces, rebuilt_faces.clone())
-            .unwrap_or_else(|_| vec![rebuilt_faces])
+        vec![rebuilt_faces]
     } else {
         sew_shell_faces(split_faces, rebuilt_faces)?
     };
