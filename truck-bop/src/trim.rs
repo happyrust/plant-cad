@@ -367,6 +367,7 @@ where
     Ok((shells, prov))
 }
 
+#[allow(dead_code)]
 fn group_faces_by_shared_vertices<C, S>(
     faces: Vec<Face<Point3, C, S>>,
 ) -> Vec<Vec<Face<Point3, C, S>>>
