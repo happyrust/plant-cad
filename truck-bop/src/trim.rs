@@ -357,10 +357,13 @@ where
     let mut shells = Vec::new();
     for shell_faces in sewn_faces {
         let shell: truck_topology::Shell<Point3, C, S> = shell_faces.into_iter().collect();
-        if shell.shell_condition() != ShellCondition::Closed {
+        let condition = shell.shell_condition();
+        if condition != ShellCondition::Closed && condition != ShellCondition::Regular {
             return Err(BopError::TopologyInvariantBroken);
         }
-        validate_shell_orientation(&shell)?;
+        if condition == ShellCondition::Closed {
+            validate_shell_orientation(&shell)?;
+        }
         shells.push(shell);
     }
     Ok((shells, prov))
