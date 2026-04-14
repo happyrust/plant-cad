@@ -304,12 +304,12 @@ where
     let any_sections = split_faces.iter().any(|sf|
         sf.trimming_loops.iter().any(|tl| tl.edges.iter().any(|e| matches!(e.source, TrimmingEdgeSource::SectionSegment { .. })))
     );
-    let multi_operand = {
+    let _multi_operand = {
         let mut ranks = split_faces.iter().map(|sf| sf.operand_rank);
         let first = ranks.next();
         first.is_some() && ranks.any(|r| Some(r) != first)
     };
-    let force_rebuild = any_sections || multi_operand;
+    let force_rebuild = any_sections;
 
     let merged = merged_map;
     let mut registry = std::mem::take(&mut bopds.boundary_edge_registry);
@@ -795,7 +795,7 @@ where
         + ParametricSurface<Point = Point3, Vector = Vector3>
         + SearchNearestParameter<D2, Point = Point3>,
 {
-    let solid = Solid::new(vec![shell.clone()]);
+    let solid = Solid::new_unchecked(vec![shell.clone()]);
     let probe_distance = shell_probe_distance(shell);
 
     for face in shell.face_iter() {
