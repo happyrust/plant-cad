@@ -39,6 +39,9 @@ The version is of the bottom crate `truck-rendimpl`.
 - **fix(api):** 空选中分支的 passthrough 路径补全了 face provenance（之前只有空的 `ProvenanceMap::default()`）。
 - **feat(trim):** 新增 `group_faces_by_shared_vertices()` 基于顶点 ID 的连通分量算法（union-find），为未来 force_rebuild 多 shell 分组预留。
 - **feat(intersect):** 新增 `coplanar_face_overlap_curves()` 共面面重叠区域边界检测算法（未启用，Issue #7 待完善集成）。
+- **fix(api):** passthrough 路径的 edge provenance 补全：使用真实 `TrimmingEdge` 来源（`OriginalBoundaryEdge` / `SectionSegment`），不再使用合成 ID。
+- **fix(trim):** `build_trimming_loops()` 容差不再混合 `parametric_tol.max(geometric_tol)`，统一使用 `geometric_tol`，避免 UV/3D 空间容差混淆。
+- **feat(trim):** 新增 `group_faces_by_shared_vertices()` 基于 Vertex ID 的 union-find 连通分量分组（为 force_rebuild 多 shell 预留）。
 
 ### Other
 
