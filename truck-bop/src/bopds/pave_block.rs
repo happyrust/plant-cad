@@ -45,6 +45,7 @@ impl PaveBlock {
         }
     }
 
+    /// All intermediate paves within this block, sorted by parameter.
     pub fn ext_paves(&self) -> &[Pave] {
         &self.ext_paves
     }
@@ -70,6 +71,7 @@ impl PaveBlock {
         true
     }
 
+    /// Returns `true` if intermediate paves exist.
     pub fn has_ext_paves(&self) -> bool {
         !self.ext_paves.is_empty()
     }
@@ -79,10 +81,12 @@ impl PaveBlock {
         param >= self.param_range.0 - tol && param <= self.param_range.1 + tol
     }
 
+    /// The split edge assigned after splitting (if any).
     pub fn split_edge(&self) -> Option<EdgeId> {
         self.split_edge
     }
 
+    /// Assign a split edge to this pave block.
     pub fn set_split_edge(&mut self, edge: EdgeId) {
         self.split_edge = Some(edge);
     }

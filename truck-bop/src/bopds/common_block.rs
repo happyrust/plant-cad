@@ -42,28 +42,34 @@ impl CommonBlock {
         }
     }
 
+    /// Returns `true` if this common block contains the given pave block.
     pub fn contains_pave_block(&self, pb: PaveBlockId) -> bool {
         self.pave_blocks.contains(&pb)
     }
 
+    /// All face IDs associated with this common block.
     pub fn faces(&self) -> &[FaceId] {
         &self.faces
     }
 
+    /// Add a face association (deduplicated).
     pub fn add_face(&mut self, face: FaceId) {
         if !self.faces.contains(&face) {
             self.faces.push(face);
         }
     }
 
+    /// Returns `true` if this common block is associated with the given face.
     pub fn contains_face(&self, face: FaceId) -> bool {
         self.faces.contains(&face)
     }
 
+    /// The geometric tolerance of this common block.
     pub fn tolerance(&self) -> f64 {
         self.tolerance
     }
 
+    /// Update the geometric tolerance.
     pub fn set_tolerance(&mut self, tolerance: f64) {
         self.tolerance = tolerance;
     }

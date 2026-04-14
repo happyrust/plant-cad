@@ -22,6 +22,7 @@ pub struct FaceInfo {
 }
 
 impl FaceInfo {
+    /// Reset all sub-shape classifications.
     pub fn clear(&mut self) {
         self.on_vertices.clear();
         self.on_pave_blocks.clear();
@@ -31,42 +32,49 @@ impl FaceInfo {
         self.section_pave_blocks.clear();
     }
 
+    /// Record a vertex that lies on the face boundary.
     pub fn add_on_vertex(&mut self, v: VertexId) {
         if !self.on_vertices.contains(&v) {
             self.on_vertices.push(v);
         }
     }
 
+    /// Record a pave block that lies on the face boundary.
     pub fn add_on_pave_block(&mut self, pb: PaveBlockId) {
         if !self.on_pave_blocks.contains(&pb) {
             self.on_pave_blocks.push(pb);
         }
     }
 
+    /// Record a vertex that lies strictly inside the face.
     pub fn add_in_vertex(&mut self, v: VertexId) {
         if !self.in_vertices.contains(&v) {
             self.in_vertices.push(v);
         }
     }
 
+    /// Record a pave block that lies strictly inside the face.
     pub fn add_in_pave_block(&mut self, pb: PaveBlockId) {
         if !self.in_pave_blocks.contains(&pb) {
             self.in_pave_blocks.push(pb);
         }
     }
 
+    /// Record a vertex from face-face intersection.
     pub fn add_section_vertex(&mut self, v: VertexId) {
         if !self.section_vertices.contains(&v) {
             self.section_vertices.push(v);
         }
     }
 
+    /// Record a pave block from face-face intersection.
     pub fn add_section_pave_block(&mut self, pb: PaveBlockId) {
         if !self.section_pave_blocks.contains(&pb) {
             self.section_pave_blocks.push(pb);
         }
     }
 
+    /// Returns `true` if no sub-shapes have been recorded.
     pub fn is_empty(&self) -> bool {
         self.on_vertices.is_empty()
             && self.on_pave_blocks.is_empty()

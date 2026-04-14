@@ -3,7 +3,7 @@
 use crate::{
     bopds::{
         MergedVertex, SectionCurve, SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace,
-        TrimmingEdge, TrimmingEdgeSource, TrimmingLoop,
+        TrimmingEdge, TrimmingEdgeSource, TrimmingLoop, VertexIdAllocator,
     },
     classify_point_in_solid, geometry_utils, BooleanOp, BopDs, BopError, EdgeId, FaceId,
     PointClassification, SectionCurveId, VertexId,
@@ -35,13 +35,14 @@ where
     let mut built = 0;
 
     for &(face_id, ref face) in faces {
+        let mut alloc = VertexIdAllocator::new(&mut vertex_counter);
         let loops = build_loops_for_face(
             face_id,
             face,
             &section_curves,
             tolerance,
             &mut registry,
-            &mut vertex_counter,
+            &mut alloc,
         );
         built += loops.len();
         for trimming_loop in loops {
@@ -997,6 +998,7 @@ where
     C: Clone + Invertible,
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
+    #[cfg(test)]
     fn new() -> Self {
         Self::with_tolerance(1.0e-6)
     }
@@ -1526,7 +1528,16 @@ fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> boo
                 matches!(classification, PointClassification::Inside)
             }
         }
-        BooleanOp::Fuse => matches!(classification, PointClassification::Outside),
+        BooleanOp::Fuse => {
+            if split_face.operand_rank == 0 {
+                matches!(
+                    classification,
+                    PointClassification::Outside | PointClassification::OnBoundary
+                )
+            } else {
+                matches!(classification, PointClassification::Outside)
+            }
+        }
         BooleanOp::Cut => {
             if split_face.operand_rank == 0 {
                 matches!(
@@ -1566,14 +1577,10 @@ where
     vertices
 }
 
-fn vertex_ids_for_polyline(counter: &mut u32, polyline: &[Point2]) -> Vec<VertexId> {
+fn vertex_ids_for_polyline(alloc: &mut VertexIdAllocator<'_>, polyline: &[Point2]) -> Vec<VertexId> {
     open_polygon_vertices(polyline)
         .iter()
-        .map(|_| {
-            let id = VertexId(*counter);
-            *counter += 1;
-            id
-        })
+        .map(|_| alloc.next())
         .collect()
 }
 
@@ -1595,7 +1602,7 @@ fn build_loops_for_face<C, S>(
     section_curves: &[SectionCurve],
     tolerance: f64,
     registry: &mut crate::bopds::SourceBoundaryEdgeRegistry,
-    vertex_counter: &mut u32,
+    alloc: &mut VertexIdAllocator<'_>,
 ) -> Vec<TrimmingLoop>
 where
     C: Clone,
@@ -1614,7 +1621,7 @@ where
         .collect();
 
     if all_sections.is_empty() {
-        let mut loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+        let mut loops = boundary_loops(face_id, face, tolerance, registry, alloc);
         classify_loops(&mut loops);
         return loops;
     }
@@ -1634,26 +1641,26 @@ where
             &open_sections,
             tolerance,
             registry,
-            vertex_counter,
+            alloc,
         )
     } else {
         Vec::new()
     };
 
     if loops.is_empty() && !open_sections.is_empty() {
-        loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+        loops = boundary_loops(face_id, face, tolerance, registry, alloc);
         for (sc_id, parameters) in &open_sections {
             let closed = close_polyline(parameters.clone(), tolerance);
             if closed.len() < 4 {
                 continue;
             }
             let edges = section_polyline_to_segment_edges(*sc_id, &closed);
-            loops.push(loop_from_polyline(face_id, edges, closed, tolerance, vertex_counter));
+            loops.push(loop_from_polyline(face_id, edges, closed, tolerance, alloc));
         }
     }
 
     if loops.is_empty() {
-        loops = boundary_loops(face_id, face, tolerance, registry, vertex_counter);
+        loops = boundary_loops(face_id, face, tolerance, registry, alloc);
     }
 
     for (sc_id, parameters) in &closed_sections {
@@ -1662,7 +1669,7 @@ where
             continue;
         }
         let edges = section_polyline_to_segment_edges(*sc_id, &closed);
-        loops.push(loop_from_polyline(face_id, edges, closed, tolerance, vertex_counter));
+        loops.push(loop_from_polyline(face_id, edges, closed, tolerance, alloc));
     }
 
     classify_loops(&mut loops);
@@ -1734,7 +1741,7 @@ fn build_loops_via_edge_graph<C, S>(
     relevant_sections: &[(SectionCurveId, Vec<Point2>)],
     tolerance: f64,
     registry: &mut crate::bopds::SourceBoundaryEdgeRegistry,
-    vertex_counter: &mut u32,
+    alloc: &mut VertexIdAllocator<'_>,
 ) -> Vec<TrimmingLoop>
 where
     C: Clone,
@@ -1778,7 +1785,7 @@ where
                 end,
                 points: vec![start, end],
                 section_curve: None,
-                original_edge: Some(edge_id_from_source_boundary(edge.clone(), registry)),
+                original_edge: Some(edge_id_from_source_boundary(edge, registry)),
             });
         }
     }
@@ -1862,7 +1869,7 @@ where
                 });
             }
 
-            loop_from_polyline(face_id, trimming_edges, uv_points, tolerance, vertex_counter)
+            loop_from_polyline(face_id, trimming_edges, uv_points, tolerance, alloc)
         })
         .collect()
 }
@@ -2043,7 +2050,7 @@ fn boundary_loops<C, S>(
     face: &Face<Point3, C, S>,
     tolerance: f64,
     registry: &mut crate::bopds::SourceBoundaryEdgeRegistry,
-    vertex_counter: &mut u32,
+    alloc: &mut VertexIdAllocator<'_>,
 ) -> Vec<TrimmingLoop>
 where
     C: Clone,
@@ -2085,7 +2092,7 @@ where
                 uv_points: vec![segment[0], segment[1]],
             })
             .collect();
-        result.push(loop_from_polyline(face_id, edges, closed, tolerance, vertex_counter));
+        result.push(loop_from_polyline(face_id, edges, closed, tolerance, alloc));
     }
 
     result
@@ -2096,14 +2103,14 @@ fn loop_from_polyline(
     edges: Vec<TrimmingEdge>,
     uv_points: Vec<Point2>,
     tolerance: f64,
-    vertex_counter: &mut u32,
+    alloc: &mut VertexIdAllocator<'_>,
 ) -> TrimmingLoop {
     let mut closed = close_polyline(uv_points, tolerance);
     let area = signed_area(&closed);
     if area.abs() <= tolerance {
         closed = dedup_consecutive_points(closed, tolerance);
     }
-    let vertex_ids = vertex_ids_for_polyline(vertex_counter, &closed);
+    let vertex_ids = vertex_ids_for_polyline(alloc, &closed);
 
     TrimmingLoop {
         face: face_id,

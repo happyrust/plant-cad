@@ -11,7 +11,10 @@ pub(crate) mod shape_info;
 
 pub use common_block::CommonBlock;
 pub use face_info::FaceInfo;
-pub use ids::{CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId};
+pub use ids::{
+    CommonBlockId, EdgeId, FaceId, PaveBlockId, SectionCurveId, ShapeId, VertexId,
+    VertexIdAllocator,
+};
 pub use interference::{
     EEInterference, EFInterference, FFInterference, InterferenceTable, MergedVertex, SectionCurve,
     SewnEdge, SewnEdgePair, SewnEdgeSource, SewnPath, SplitFace, TrimmingEdge,

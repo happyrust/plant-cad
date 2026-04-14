@@ -17,6 +17,7 @@ mod bopds;
 mod bounding;
 mod broad_phase;
 mod error;
+mod fclass2d;
 pub(crate) mod geometry_utils;
 mod intersect;
 mod options;
@@ -24,6 +25,8 @@ mod pipeline;
 /// Provenance tracking for boolean operation results.
 pub mod provenance;
 mod trim;
+
+pub use fclass2d::FClass2d;
 
 pub use bopds::{
     BopDs, CommonBlock, CommonBlockId, EdgeId, FaceId, FaceInfo, MergedVertex, PaveBlock,

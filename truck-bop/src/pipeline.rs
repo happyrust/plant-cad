@@ -1,6 +1,6 @@
 //! Boolean operation pipeline
 
-use crate::BopError;
+use crate::{fclass2d::FClass2d, BopError};
 use truck_base::{
     bounding_box::BoundingBox,
     cgmath64::{InnerSpace, MetricSpace, Point2, Point3, Vector3},
@@ -177,6 +177,7 @@ where
     for face in shell.face_iter() {
         let surface = face.oriented_surface();
         let uv_hints = face_boundary_uv_hints(&face, &surface);
+        let classifier = FClass2d::from_face(&face, &surface, tolerance, None);
         let mut face_hits: Vec<f64> = Vec::new();
 
         for hint in &uv_hints {
@@ -195,7 +196,8 @@ where
             if face_hits.iter().any(|&h| (h - t).abs() < tolerance) {
                 continue;
             }
-            if uv_inside_face(&face, &surface, (u, v), tolerance) {
+            let cls = classifier.classify(Point2::new(u, v));
+            if cls != PointClassification::Outside {
                 face_hits.push(t);
             }
         }
@@ -288,57 +290,6 @@ fn solve_3x3(
     let x1 = col0.dot(rhs.cross(col2)) * inv;
     let x2 = col0.dot(col1.cross(rhs)) * inv;
     Some((x0, x1, x2))
-}
-
-/// Check whether `(u, v)` lies inside the face boundary in UV space.
-fn uv_inside_face<C, S>(
-    face: &Face<Point3, C, S>,
-    surface: &S,
-    uv: (f64, f64),
-    tolerance: f64,
-) -> bool
-where
-    C: Clone,
-    S: SearchNearestParameter<D2, Point = Point3>,
-{
-    use crate::geometry_utils;
-    let point = Point2::new(uv.0, uv.1);
-    let mut boundaries = face.boundaries().into_iter();
-
-    let Some(outer) = boundaries.next() else {
-        return false;
-    };
-    let outer_polygon = wire_to_uv_polygon(&outer, surface);
-    if !geometry_utils::point_in_or_on_polygon(&outer_polygon, point, tolerance) {
-        return false;
-    }
-
-    for hole in boundaries {
-        let hole_polygon = wire_to_uv_polygon(&hole, surface);
-        if geometry_utils::point_in_polygon(&hole_polygon, point)
-            && !geometry_utils::point_on_polygon_boundary(&hole_polygon, point, tolerance)
-        {
-            return false;
-        }
-    }
-    true
-}
-
-fn wire_to_uv_polygon<C, S>(
-    wire: &truck_topology::Wire<Point3, C>,
-    surface: &S,
-) -> Vec<Point2>
-where
-    C: Clone,
-    S: SearchNearestParameter<D2, Point = Point3>,
-{
-    wire.vertex_iter()
-        .filter_map(|vertex| {
-            surface
-                .search_nearest_parameter(vertex.point(), None, RAY_UV_SEARCH_TRIALS)
-                .map(|(u, v)| Point2::new(u, v))
-        })
-        .collect()
 }
 
 fn dedup_hits(hits: &mut Vec<f64>, tolerance: f64) {

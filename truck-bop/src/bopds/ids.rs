@@ -28,6 +28,25 @@ pub struct CommonBlockId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SectionCurveId(pub u32);
 
+/// Monotonically increasing vertex ID allocator, borrowed from [`BopDs`](super::BopDs).
+pub struct VertexIdAllocator<'a> {
+    counter: &'a mut u32,
+}
+
+impl<'a> VertexIdAllocator<'a> {
+    /// Wrap a mutable reference to the raw counter.
+    pub fn new(counter: &'a mut u32) -> Self {
+        Self { counter }
+    }
+
+    /// Allocate the next vertex ID.
+    pub fn next(&mut self) -> VertexId {
+        let id = VertexId(*self.counter);
+        *self.counter += 1;
+        id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
