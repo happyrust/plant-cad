@@ -1020,6 +1020,9 @@ where
     }
 
     /// Returns (canonical_vertex_id, vertex_object).
+    ///
+    /// Uses a relaxed tolerance (10x geometric_tol) for coordinate matching
+    /// to compensate for UV→3D roundtrip errors in rebuild paths.
     fn get_or_create_vertex(&mut self, id: VertexId, point: Point3) -> (VertexId, truck_topology::Vertex<Point3>) {
         use truck_base::cgmath64::MetricSpace;
 
@@ -1027,9 +1030,10 @@ where
             return (id, v.clone());
         }
 
+        let snap_tolerance = self.tolerance * 10.0;
         let match_id = self.vertex_by_point
             .iter()
-            .find(|(ep, _)| ep.distance(point) < self.tolerance)
+            .find(|(ep, _)| ep.distance(point) < snap_tolerance)
             .map(|(_, eid)| *eid);
 
         if let Some(existing_id) = match_id {
