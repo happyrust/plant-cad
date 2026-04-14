@@ -152,6 +152,7 @@ fn try_analytical_plane_plane(
     Some(curves)
 }
 
+#[allow(dead_code)]
 fn coplanar_face_overlap_curves(
     face0: &Face<Point3, Curve, Surface>,
     face1: &Face<Point3, Curve, Surface>,
