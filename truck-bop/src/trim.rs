@@ -25,10 +25,7 @@ where
     C: Clone + Invertible + truck_geotrait::BoundedCurve + truck_geotrait::ParametricCurve<Point = Point3>,
     S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
 {
-    let tolerance = bopds
-        .options()
-        .parametric_tol
-        .max(bopds.options().geometric_tol);
+    let tolerance = bopds.options().geometric_tol;
     let section_curves = bopds.section_curves().to_vec();
     let mut registry = std::mem::take(&mut bopds.boundary_edge_registry);
     let mut vertex_counter = bopds.next_generated_vertex_id;
