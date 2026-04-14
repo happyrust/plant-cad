@@ -131,10 +131,7 @@ fn run_boolean_pipeline(
         let all_boundary = ds.split_faces().iter().all(|sf|
             sf.classification == Some(PointClassification::OnBoundary));
         if all_boundary && !ds.split_faces().is_empty() {
-            let mut prov = ProvenanceMap::default();
-            for sf in ds.split_faces() {
-                prov.record_face(sf.original_face, sf.operand_rank);
-            }
+            let prov = provenance_for_passthrough(a, &ds);
             return Ok(BooleanResult {
                 solids: vec![a.clone()],
                 provenance: prov,
@@ -190,6 +187,34 @@ fn register_solid_shapes(
     }
 
     (vertices, edges, faces)
+}
+
+fn provenance_for_passthrough(
+    solid: &Solid<P, Curve, Surface>,
+    ds: &BopDs,
+) -> ProvenanceMap {
+    let mut prov = ProvenanceMap::default();
+    for sf in ds.split_faces() {
+        prov.record_face(sf.original_face, sf.operand_rank);
+    }
+    for shell in solid.boundaries() {
+        for face in shell.face_iter() {
+            for wire in face.boundaries() {
+                let verts: Vec<_> = wire.vertex_iter().collect();
+                for i in 0..verts.len() {
+                    let next = (i + 1) % verts.len();
+                    let start_id = VertexId(i as u32);
+                    let end_id = VertexId(next as u32);
+                    prov.record_edge(
+                        start_id,
+                        end_id,
+                        SourceOrigin::OriginalEdge(EdgeId(i as u32)),
+                    );
+                }
+            }
+        }
+    }
+    prov
 }
 
 /// Common (intersection) operation.

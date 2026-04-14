@@ -305,7 +305,7 @@ where
     prov.merged_vertices = merged_map.clone();
 
     let any_sections = split_faces.iter().any(|sf|
-        sf.trimming_loops.iter().any(|tl| tl.edges.iter().any(|e| matches!(e.source, TrimmingEdgeSource::SectionCurve(_))))
+        sf.trimming_loops.iter().any(|tl| tl.edges.iter().any(|e| matches!(e.source, TrimmingEdgeSource::SectionSegment { .. })))
     );
     let multi_operand = {
         let mut ranks = split_faces.iter().map(|sf| sf.operand_rank);
@@ -344,26 +344,20 @@ where
             .collect::<Result<Vec<_>, BopError>>()?
     };
     bopds.boundary_edge_registry = registry;
-    if force_rebuild {
-        let shell: truck_topology::Shell<Point3, C, S> = rebuilt_faces.into_iter().collect();
-        let condition = shell.shell_condition();
-        match condition {
-            ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {
-                return Ok((vec![shell], prov));
-            }
-            _ => {
-                return Err(BopError::TopologyInvariantBroken);
-            }
-        }
-    }
 
-    let sewn_faces = sew_shell_faces(split_faces, rebuilt_faces)?;
+    let raw_shells: Vec<Vec<Face<Point3, C, S>>> = if force_rebuild {
+        vec![rebuilt_faces]
+    } else {
+        sew_shell_faces(split_faces, rebuilt_faces)?
+    };
+
     let mut shells = Vec::new();
-    for shell_faces in sewn_faces {
+    for shell_faces in raw_shells {
         let shell: truck_topology::Shell<Point3, C, S> = shell_faces.into_iter().collect();
         let condition = shell.shell_condition();
-        if condition != ShellCondition::Closed && condition != ShellCondition::Regular {
-            return Err(BopError::TopologyInvariantBroken);
+        match condition {
+            ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {}
+            _ => return Err(BopError::TopologyInvariantBroken),
         }
         if condition == ShellCondition::Closed {
             validate_shell_orientation(&shell)?;
@@ -616,8 +610,8 @@ fn canonical_rebuilt_edge(
 ) -> CanonicalRebuiltEdge {
     let undirected = undirected_edge_key(start, end);
     match edge.source {
-        TrimmingEdgeSource::SectionCurve(sc_id) => {
-            CanonicalRebuiltEdge::SectionSegment(sc_id, undirected.0, undirected.1)
+        TrimmingEdgeSource::SectionSegment { curve, .. } => {
+            CanonicalRebuiltEdge::SectionSegment(curve, undirected.0, undirected.1)
         }
         TrimmingEdgeSource::OriginalBoundaryEdge(edge_id) => {
             CanonicalRebuiltEdge::OriginalEdge(edge_id)
@@ -1146,8 +1140,8 @@ where
         let (eid, end) = &topo_vertices[next];
 
         let source = trimming_loop.edges.get(i).and_then(|te| match te.source {
-            TrimmingEdgeSource::SectionCurve(sc) => {
-                Some(crate::provenance::SourceOrigin::SectionCurve(sc))
+            TrimmingEdgeSource::SectionSegment { curve, .. } => {
+                Some(crate::provenance::SourceOrigin::SectionCurve(curve))
             }
             TrimmingEdgeSource::OriginalBoundaryEdge(oe) => {
                 Some(crate::provenance::SourceOrigin::OriginalEdge(oe))
@@ -1216,7 +1210,7 @@ fn collect_sewn_edges(
                 let undirected = undirected_edge_key(sewn_start, sewn_end);
                 let (original_edge_id, section_curve_id) = match edge.source {
                     TrimmingEdgeSource::OriginalBoundaryEdge(id) => (Some(id), None),
-                    TrimmingEdgeSource::SectionCurve(sc) => (Some(edge_id_from_section_curve(sc)), Some(sc)),
+                    TrimmingEdgeSource::SectionSegment { curve, .. } => (Some(edge_id_from_section_curve(curve)), Some(curve)),
                     TrimmingEdgeSource::Unattributed => (None, None),
                 };
                 let source = SewnEdgeSource {
@@ -1686,8 +1680,12 @@ fn section_polyline_to_segment_edges(
 ) -> Vec<TrimmingEdge> {
     closed
         .windows(2)
-        .map(|seg| TrimmingEdge {
-            source: TrimmingEdgeSource::SectionCurve(sc_id),
+        .enumerate()
+        .map(|(i, seg)| TrimmingEdge {
+            source: TrimmingEdgeSource::SectionSegment {
+                curve: sc_id,
+                segment_index: i as u32,
+            },
             uv_points: vec![seg[0], seg[1]],
         })
         .collect()
@@ -1859,7 +1857,7 @@ where
                     uv_points.extend(edge.points.iter().skip(1).copied());
                 }
                 let source = match (edge.section_curve, edge.original_edge) {
-                    (Some(sc), _) => TrimmingEdgeSource::SectionCurve(sc),
+                    (Some(sc), _) => TrimmingEdgeSource::SectionSegment { curve: sc, segment_index: 0 },
                     (_, Some(oe)) => TrimmingEdgeSource::OriginalBoundaryEdge(oe),
                     _ => TrimmingEdgeSource::Unattributed,
                 };
@@ -2309,7 +2307,7 @@ fn collect_splitting_edges(trimming_loops: &[TrimmingLoop]) -> Vec<SectionCurveI
     let mut splitting_edges = Vec::new();
     for trimming_loop in trimming_loops {
         for edge in &trimming_loop.edges {
-            if let TrimmingEdgeSource::SectionCurve(sc_id) = edge.source {
+            if let TrimmingEdgeSource::SectionSegment { curve: sc_id, .. } = edge.source {
                 if !splitting_edges.contains(&sc_id) {
                     splitting_edges.push(sc_id);
                 }
@@ -2617,7 +2615,7 @@ mod tests {
         let hole = loops.iter().find(|loop_| !loop_.is_outer).unwrap();
         assert_eq!(hole.uv_points.first(), hole.uv_points.last());
         assert!(hole.edges.len() >= 1);
-        assert!(hole.edges.iter().all(|e| e.source == TrimmingEdgeSource::SectionCurve(section_curve_id)));
+        assert!(hole.edges.iter().all(|e| matches!(e.source, TrimmingEdgeSource::SectionSegment { curve, .. } if curve == section_curve_id)));
     }
 
     #[test]
@@ -2637,8 +2635,8 @@ mod tests {
         let outer = loops.iter().find(|loop_| loop_.is_outer).unwrap();
         let inner = loops.iter().find(|loop_| !loop_.is_outer).unwrap();
         assert!(outer.signed_area.abs() > inner.signed_area.abs());
-        assert!(outer.edges.iter().all(|edge| !matches!(edge.source, TrimmingEdgeSource::SectionCurve(_))));
-        assert!(inner.edges.iter().all(|edge| !matches!(edge.source, TrimmingEdgeSource::SectionCurve(_))));
+        assert!(outer.edges.iter().all(|edge| !matches!(edge.source, TrimmingEdgeSource::SectionSegment { .. })));
+        assert!(inner.edges.iter().all(|edge| !matches!(edge.source, TrimmingEdgeSource::SectionSegment { .. })));
     }
 
     #[test]
@@ -2648,19 +2646,19 @@ mod tests {
             vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
             edges: vec![
                 TrimmingEdge {
-                    source: TrimmingEdgeSource::SectionCurve(SectionCurveId(1)),
+                    source: TrimmingEdgeSource::SectionSegment { curve: SectionCurveId(1), segment_index: 0 },
                     uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
                 },
                 TrimmingEdge {
-                    source: TrimmingEdgeSource::SectionCurve(SectionCurveId(2)),
+                    source: TrimmingEdgeSource::SectionSegment { curve: SectionCurveId(2), segment_index: 0 },
                     uv_points: vec![Point2::new(1.0, 0.0), Point2::new(1.0, 1.0)],
                 },
                 TrimmingEdge {
-                    source: TrimmingEdgeSource::SectionCurve(SectionCurveId(3)),
+                    source: TrimmingEdgeSource::SectionSegment { curve: SectionCurveId(3), segment_index: 0 },
                     uv_points: vec![Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)],
                 },
                 TrimmingEdge {
-                    source: TrimmingEdgeSource::SectionCurve(SectionCurveId(4)),
+                    source: TrimmingEdgeSource::SectionSegment { curve: SectionCurveId(4), segment_index: 0 },
                     uv_points: vec![Point2::new(0.0, 1.0), Point2::new(0.0, 0.0)],
                 },
             ],

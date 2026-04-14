@@ -118,8 +118,13 @@ pub struct SplitFace {
 pub enum TrimmingEdgeSource {
     /// Edge comes from an original face boundary in the input solid.
     OriginalBoundaryEdge(EdgeId),
-    /// Edge comes from an intersection section curve.
-    SectionCurve(SectionCurveId),
+    /// Edge comes from a segment of an intersection section curve.
+    SectionSegment {
+        /// The parent section curve.
+        curve: SectionCurveId,
+        /// Zero-based index of the segment within the polyline discretization.
+        segment_index: u32,
+    },
     /// Edge has no traceable source (e.g. synthesized during loop repair).
     Unattributed,
 }
@@ -450,7 +455,7 @@ mod tests {
             face: FaceId(1),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(2)),
+                source: TrimmingEdgeSource::SectionSegment { curve: SectionCurveId(2), segment_index: 0 },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -474,7 +479,7 @@ mod tests {
             face: FaceId(1),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(2)),
+                source: TrimmingEdgeSource::SectionSegment { curve: SectionCurveId(2), segment_index: 0 },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
