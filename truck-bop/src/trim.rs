@@ -22,7 +22,7 @@ pub fn build_trimming_loops<C, S>(
     faces: &[(FaceId, Face<Point3, C, S>)],
 ) -> usize
 where
-    C: Clone,
+    C: Clone + Invertible + truck_geotrait::BoundedCurve + truck_geotrait::ParametricCurve<Point = Point3>,
     S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
 {
     let tolerance = bopds
@@ -1605,7 +1605,7 @@ fn build_loops_for_face<C, S>(
     alloc: &mut VertexIdAllocator<'_>,
 ) -> Vec<TrimmingLoop>
 where
-    C: Clone,
+    C: Clone + Invertible + truck_geotrait::BoundedCurve + truck_geotrait::ParametricCurve<Point = Point3>,
     S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
 {
     let all_sections: Vec<_> = section_curves
@@ -1744,49 +1744,45 @@ fn build_loops_via_edge_graph<C, S>(
     alloc: &mut VertexIdAllocator<'_>,
 ) -> Vec<TrimmingLoop>
 where
-    C: Clone,
+    C: Clone + Invertible + truck_geotrait::BoundedCurve + truck_geotrait::ParametricCurve<Point = Point3>,
     S: Clone + Invertible + SearchParameter<D2, Point = Point3>,
 {
     let surface = face.oriented_surface();
     let mut boundary_edges: Vec<UvEdge> = Vec::new();
+    const BOUNDARY_SAMPLES: usize = 4;
 
     for wire in face.boundaries() {
-        let mut hint = None;
-        let mut uv_points = Vec::new();
         let edges_iter: Vec<_> = wire.edge_iter().collect();
 
-        for vertex in wire.vertex_iter() {
-            let point = vertex.point();
-            let uv = surface
-                .search_parameter(point, hint.map(Into::into), SEARCH_PARAMETER_TRIALS)
-                .or_else(|| surface.search_parameter(point, None, SEARCH_PARAMETER_TRIALS));
-            let Some(uv) = uv else {
-                uv_points.clear();
-                break;
-            };
-            let uv = Point2::new(uv.0, uv.1);
-            hint = Some(uv);
-            uv_points.push(uv);
-        }
-
-        if uv_points.len() < 3 {
-            continue;
-        }
-
-        let closed = close_polyline(uv_points.clone(), tolerance);
-        for (i, edge) in edges_iter.iter().enumerate() {
-            let start = closed[i];
-            if i + 1 >= closed.len() {
-                break;
+        for edge in &edges_iter {
+            let curve = edge.oriented_curve();
+            let (t0, t1) = curve.range_tuple();
+            let n = BOUNDARY_SAMPLES.max(2);
+            let mut edge_uv_points = Vec::with_capacity(n + 1);
+            for i in 0..=n {
+                let t = t0 + (t1 - t0) * (i as f64) / (n as f64);
+                let pt3 = curve.subs(t);
+                if let Some(uv) = surface.search_parameter(pt3, None, SEARCH_PARAMETER_TRIALS) {
+                    let p2 = Point2::new(uv.0, uv.1);
+                    if edge_uv_points
+                        .last()
+                        .map_or(true, |prev: &Point2| prev.distance2(p2) > 1.0e-18)
+                    {
+                        edge_uv_points.push(p2);
+                    }
+                }
             }
-            let end = closed[i + 1];
-            boundary_edges.push(UvEdge {
-                start,
-                end,
-                points: vec![start, end],
-                section_curve: None,
-                original_edge: Some(edge_id_from_source_boundary(edge, registry)),
-            });
+            if edge_uv_points.len() >= 2 {
+                let start = edge_uv_points[0];
+                let end = *edge_uv_points.last().unwrap();
+                boundary_edges.push(UvEdge {
+                    start,
+                    end,
+                    points: edge_uv_points,
+                    section_curve: None,
+                    original_edge: Some(edge_id_from_source_boundary(edge, registry)),
+                });
+            }
         }
     }
 
