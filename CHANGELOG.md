@@ -25,6 +25,14 @@ The version is of the bottom crate `truck-rendimpl`.
 - **feat(provenance):** New `provenance` module with `SourceOrigin`, `ProvenanceMap`, `EdgeProvenance`, `FaceProvenance` types — full edge/face origin tracking through boolean operations without modifying `truck-topology` core types.
 - **feat(api):** `common_with_provenance`/`fuse_with_provenance`/`cut_with_provenance` API variants returning `BooleanResult { solids, provenance }`.
 - **feat(trim):** `assemble_shells` now returns `(shells, ProvenanceMap)`, threading edge/face provenance through `TopologyCache` rebuild and original-face reuse paths.
+- **feat(fclass2d):** New `FClass2d` UV-space point-face classifier with multi-wire support, periodic parameter domain handling, and caching; replaces simplified `uv_inside_face` in ray-casting pipeline.
+- **fix(trim):** Fuse selection now correctly keeps OnBoundary faces from operand 0 only, aligned with OCCT semantics (previously dropped all OnBoundary).
+- **refactor(bopds):** `VertexIdAllocator` type-safe wrapper replacing raw `&mut u32` through vertex ID allocation chain.
+- **feat(trim):** Boundary edges in UV edge-graph now sample along curve with 4 intermediate points, improving curved surface accuracy.
+- **feat(api):** `section()` operation implemented — extracts FF intersection curves as open shell with BSpline edges.
+- **fix(trim):** Accept `Oriented` and `Regular` shells in `build_solids_from_shells`, fixing `overlapping_fuse` and `overlapping_cut` that previously returned `TopologyInvariantBroken`.
+- **fix(trim):** `TopologyCache` vertex snap tolerance relaxed to 10× geometric tolerance, compensating for UV→3D roundtrip errors.
+- **chore:** Complete `missing_docs` for `CommonBlock`, `FaceInfo`, and `PaveBlock` methods; fix `suspicious_double_ref_op` and `dead_code` warnings.
 
 ### Other
 
