@@ -33,6 +33,12 @@ The version is of the bottom crate `truck-rendimpl`.
 - **fix(trim):** Accept `Oriented` and `Regular` shells in `build_solids_from_shells`, fixing `overlapping_fuse` and `overlapping_cut` that previously returned `TopologyInvariantBroken`.
 - **fix(trim):** `TopologyCache` vertex snap tolerance relaxed to 10× geometric tolerance, compensating for UV→3D roundtrip errors.
 - **chore:** Complete `missing_docs` for `CommonBlock`, `FaceInfo`, and `PaveBlock` methods; fix `suspicious_double_ref_op` and `dead_code` warnings.
+- **fix(trim):** `canonical_edges_share_identity()` 现在完整比较 `SectionSegment(sc_id, v1, v2)` 三元组，不再只比较 `sc_id` 导致同一 section curve 的不同 segment 被错误视为同一条边。
+- **fix(api):** `run_boolean_pipeline()` 的 `all_boundary` 空选中分支现在区分操作类型：Section 操作返回空结果而非直接返回输入 solid。
+- **refactor(bopds):** `TrimmingEdgeSource::SectionCurve(id)` 升级为 `SectionSegment { curve, segment_index }`，支持 segment 级别的来源身份追踪。
+- **fix(api):** 空选中分支的 passthrough 路径补全了 face provenance（之前只有空的 `ProvenanceMap::default()`）。
+- **feat(trim):** 新增 `group_faces_by_shared_vertices()` 基于顶点 ID 的连通分量算法（union-find），为未来 force_rebuild 多 shell 分组预留。
+- **feat(intersect):** 新增 `coplanar_face_overlap_curves()` 共面面重叠区域边界检测算法（未启用，Issue #7 待完善集成）。
 
 ### Other
 
