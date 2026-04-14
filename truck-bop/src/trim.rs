@@ -1161,7 +1161,7 @@ where
     Ok(truck_topology::Wire::from(edges))
 }
 
-/// Builds solids from closed shell components and verifies topology validity.
+/// Builds solids from shell components and verifies topology validity.
 pub fn build_solids_from_shells<C, S>(
     shells: Vec<truck_topology::Shell<Point3, C, S>>,
 ) -> Result<Vec<Solid<Point3, C, S>>, BopError>
@@ -1171,20 +1171,13 @@ where
     let mut solids = Vec::with_capacity(shells.len());
     for shell in shells {
         let condition = shell.shell_condition();
-        if condition != ShellCondition::Closed && condition != ShellCondition::Regular {
-            return Err(BopError::TopologyInvariantBroken);
+        match condition {
+            ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {}
+            _ => return Err(BopError::TopologyInvariantBroken),
         }
 
         let solid = Solid::new_unchecked(vec![shell]);
-        match solid.boundaries().as_slice() {
-            [boundary] if {
-                let c = boundary.shell_condition();
-                c == ShellCondition::Closed || c == ShellCondition::Regular
-            } => {
-                solids.push(solid)
-            }
-            _ => return Err(BopError::TopologyInvariantBroken),
-        }
+        solids.push(solid);
     }
 
     Ok(solids)
