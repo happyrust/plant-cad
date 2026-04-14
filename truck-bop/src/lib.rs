@@ -427,9 +427,15 @@ pub fn section(
         };
 
         let edge = Edge::new(&v0, &v1, curve);
-        let wire = truck_topology::Wire::from(vec![edge]);
-        let face = Face::new(vec![wire], surface);
-        section_faces.push(face);
+        if sc.start == sc.end {
+            let wire = truck_topology::Wire::from(vec![edge]);
+            let face = Face::new(vec![wire], surface);
+            section_faces.push(face);
+        } else {
+            let wire = truck_topology::Wire::from(vec![edge]);
+            let face = Face::new_unchecked(vec![wire], surface);
+            section_faces.push(face);
+        }
     }
 
     Ok(section_faces.into())
