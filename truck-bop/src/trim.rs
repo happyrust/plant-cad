@@ -1400,7 +1400,7 @@ fn undirected_edge_key(start: VertexId, end: VertexId) -> (VertexId, VertexId) {
     }
 }
 
-fn open_loop_vertex_ids(trimming_loop: &TrimmingLoop) -> &[VertexId] {
+pub(crate) fn open_loop_vertex_ids(trimming_loop: &TrimmingLoop) -> &[VertexId] {
     if trimming_loop.vertex_ids.len() >= 2
         && trimming_loop.uv_points.len() >= 2
         && trimming_loop.uv_points.first() == trimming_loop.uv_points.last()

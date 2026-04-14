@@ -200,26 +200,29 @@ fn register_solid_shapes(
 }
 
 fn provenance_for_passthrough(
-    solid: &Solid<P, Curve, Surface>,
+    _solid: &Solid<P, Curve, Surface>,
     ds: &BopDs,
 ) -> ProvenanceMap {
     let mut prov = ProvenanceMap::default();
     for sf in ds.split_faces() {
         prov.record_face(sf.original_face, sf.operand_rank);
-    }
-    for shell in solid.boundaries() {
-        for face in shell.face_iter() {
-            for wire in face.boundaries() {
-                let verts: Vec<_> = wire.vertex_iter().collect();
-                for i in 0..verts.len() {
-                    let next = (i + 1) % verts.len();
-                    let start_id = VertexId(i as u32);
-                    let end_id = VertexId(next as u32);
-                    prov.record_edge(
-                        start_id,
-                        end_id,
-                        SourceOrigin::OriginalEdge(EdgeId(i as u32)),
-                    );
+        for tl in &sf.trimming_loops {
+            let open_vids = trim::open_loop_vertex_ids(tl);
+            for i in 0..open_vids.len() {
+                let next = (i + 1) % open_vids.len();
+                let edge_source = tl.edges.get(i).map(|e| match e.source {
+                    bopds::TrimmingEdgeSource::OriginalBoundaryEdge(eid) => {
+                        SourceOrigin::OriginalEdge(eid)
+                    }
+                    bopds::TrimmingEdgeSource::SectionSegment { curve, .. } => {
+                        SourceOrigin::SectionCurve(curve)
+                    }
+                    bopds::TrimmingEdgeSource::Unattributed => {
+                        SourceOrigin::OriginalEdge(EdgeId(0))
+                    }
+                });
+                if let Some(source) = edge_source {
+                    prov.record_edge(open_vids[i], open_vids[next], source);
                 }
             }
         }
