@@ -192,6 +192,19 @@ fn coplanar_face_overlap_curves(
         return Some(Vec::new());
     }
 
+    let face1_inside_or_on_face0 = poly1
+        .iter()
+        .all(|p| geometry_utils::point_in_or_on_polygon(&poly0, *p, tolerance));
+    let face0_inside_or_on_face1 = poly0
+        .iter()
+        .all(|p| geometry_utils::point_in_or_on_polygon(&poly1, *p, tolerance));
+    if face1_inside_or_on_face0 && face0_inside_or_on_face1 {
+        return Some(Vec::new());
+    }
+    if !face1_inside_or_on_face0 && !poly1.iter().any(|p| geometry_utils::point_in_polygon(&poly0, *p)) {
+        return Some(Vec::new());
+    }
+
     let mut overlap_edges: Vec<Vec<Point3>> = Vec::new();
     for i in 0..poly1.len() {
         let a = poly1[i];
@@ -202,8 +215,7 @@ fn coplanar_face_overlap_curves(
         let a_on_boundary = geometry_utils::point_on_polygon_boundary(&poly0, a, tolerance);
         let b_on_boundary = geometry_utils::point_on_polygon_boundary(&poly0, b, tolerance);
 
-        let both_on_boundary = a_on_boundary && b_on_boundary && !a_inside && !b_inside;
-        if both_on_boundary {
+        if a_on_boundary && b_on_boundary && !a_inside && !b_inside {
             continue;
         }
 
