@@ -246,13 +246,96 @@ pub fn cut_with_provenance(
     run_boolean_pipeline(a, b, tol, BooleanOp::Cut)
 }
 
-/// Section operation (not yet implemented).
+/// Section operation — returns a shell of faces lying on the intersection of two solids.
+///
+/// Unlike `common`/`fuse`/`cut`, section produces an **open** shell consisting
+/// of the faces that lie on the shared boundary between the two operands.
 pub fn section(
-    _a: &Solid<P, Curve, Surface>,
-    _b: &Solid<P, Curve, Surface>,
-    _tol: f64,
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
 ) -> Result<Shell<P, Curve, Surface>, BopError> {
-    Err(BopError::NotImplemented("section"))
+    let options = BopOptions {
+        geometric_tol: tol,
+        parametric_tol: tol * 0.01,
+        ..BopOptions::default()
+    };
+    let mut ds = BopDs::with_options(options);
+
+    let (vertices, edges, faces) = register_solid_shapes(&mut ds, a, 0);
+    let (vertices_b, edges_b, faces_b) = register_solid_shapes(&mut ds, b, 1);
+
+    let mut all_vertices = vertices;
+    all_vertices.extend(vertices_b);
+    let mut all_edges = edges;
+    all_edges.extend(edges_b);
+    let mut all_faces = faces;
+    all_faces.extend(faces_b);
+
+    let candidates =
+        generate_candidate_pairs(&all_vertices, &all_edges, &all_faces, ds.options());
+
+    let cross_operand = |id_a, id_b| -> bool {
+        let rank_a = ds.face_shape_info(id_a).map(|si| si.operand_rank);
+        let rank_b = ds.face_shape_info(id_b).map(|si| si.operand_rank);
+        rank_a.is_some() && rank_b.is_some() && rank_a != rank_b
+    };
+
+    let cross_ff: Vec<_> = candidates
+        .ff
+        .iter()
+        .copied()
+        .filter(|&(a, b)| cross_operand(a, b))
+        .collect();
+
+    intersect_ff(&mut ds, &all_faces, &cross_ff);
+
+    let section_curves = ds.section_curves().to_vec();
+    if section_curves.is_empty() {
+        return Ok(Shell::new());
+    }
+
+    let mut section_faces: Vec<Face<P, Curve, Surface>> = Vec::new();
+
+    for sc in &section_curves {
+        if sc.samples.len() < 2 {
+            continue;
+        }
+
+        let (face1_id, face2_id) = sc.faces;
+        let original_face = all_faces
+            .iter()
+            .find(|(id, _)| *id == face1_id)
+            .or_else(|| all_faces.iter().find(|(id, _)| *id == face2_id));
+
+        let Some((_, ref_face)) = original_face else {
+            continue;
+        };
+        let surface = ref_face.oriented_surface();
+
+        let control_points: Vec<Point3> = sc.samples.clone();
+        if control_points.len() < 2 {
+            continue;
+        }
+
+        let knot_vec = truck_modeling::KnotVec::uniform_knot(control_points.len() - 1, 1);
+        let bsp = truck_modeling::BSplineCurve::new(knot_vec, control_points);
+        let curve = Curve::BSplineCurve(bsp);
+
+        let v0 = Vertex::new(sc.samples[0]);
+        let v1 = if sc.start == sc.end {
+            v0.clone()
+        } else {
+            Vertex::new(*sc.samples.last().unwrap())
+        };
+
+        let edge = Edge::new(&v0, &v1, curve);
+        let wire = truck_topology::Wire::from(vec![edge]);
+        let face = Face::new(vec![wire], surface);
+        section_faces.push(face);
+    }
+
+    Ok(section_faces.into())
 }
 
 #[cfg(test)]
