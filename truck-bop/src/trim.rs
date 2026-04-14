@@ -367,6 +367,66 @@ where
     Ok((shells, prov))
 }
 
+fn group_faces_by_shared_vertices<C, S>(
+    faces: Vec<Face<Point3, C, S>>,
+) -> Vec<Vec<Face<Point3, C, S>>>
+where
+    C: Clone,
+    S: Clone,
+{
+    if faces.is_empty() {
+        return Vec::new();
+    }
+    let n = faces.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    fn union(parent: &mut [usize], a: usize, b: usize) {
+        let ra = find(parent, a);
+        let rb = find(parent, b);
+        if ra != rb {
+            parent[rb] = ra;
+        }
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let shared = faces[i].boundaries().iter().any(|wi| {
+                wi.vertex_iter().any(|vi| {
+                    faces[j].boundaries().iter().any(|wj| {
+                        wj.vertex_iter().any(|vj| vi.id() == vj.id())
+                    })
+                })
+            });
+            if shared {
+                union(&mut parent, i, j);
+            }
+        }
+    }
+
+    let mut groups: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    for i in 0..n {
+        groups.entry(find(&mut parent, i)).or_default().push(i);
+    }
+
+    let mut faces_vec: Vec<Option<Face<Point3, C, S>>> = faces.into_iter().map(Some).collect();
+    groups
+        .into_values()
+        .map(|indices| {
+            indices
+                .into_iter()
+                .map(|i| faces_vec[i].take().unwrap())
+                .collect()
+        })
+        .collect()
+}
+
 fn sew_shell_faces<C, S>(
     split_faces: &[SplitFace],
     rebuilt_faces: Vec<Face<Point3, C, S>>,
