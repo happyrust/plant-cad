@@ -152,7 +152,6 @@ fn try_analytical_plane_plane(
     Some(curves)
 }
 
-#[allow(dead_code)]
 fn coplanar_face_overlap_curves(
     face0: &Face<Point3, Curve, Surface>,
     face1: &Face<Point3, Curve, Surface>,
@@ -197,9 +196,18 @@ fn coplanar_face_overlap_curves(
     for i in 0..poly1.len() {
         let a = poly1[i];
         let b = poly1[(i + 1) % poly1.len()];
-        if geometry_utils::point_in_or_on_polygon(&poly0, a, tolerance)
-            || geometry_utils::point_in_or_on_polygon(&poly0, b, tolerance)
-        {
+
+        let a_inside = geometry_utils::point_in_polygon(&poly0, a);
+        let b_inside = geometry_utils::point_in_polygon(&poly0, b);
+        let a_on_boundary = geometry_utils::point_on_polygon_boundary(&poly0, a, tolerance);
+        let b_on_boundary = geometry_utils::point_on_polygon_boundary(&poly0, b, tolerance);
+
+        let both_on_boundary = a_on_boundary && b_on_boundary && !a_inside && !b_inside;
+        if both_on_boundary {
+            continue;
+        }
+
+        if a_inside || b_inside || a_on_boundary || b_on_boundary {
             let a3 = origin + u_axis * a.x + v_axis * a.y;
             let b3 = origin + u_axis * b.x + v_axis * b.y;
             overlap_edges.push(vec![a3, b3]);
