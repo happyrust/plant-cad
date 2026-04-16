@@ -445,6 +445,11 @@ impl BopDs {
         );
     }
 
+    /// Insert a pave, merging with an existing one if their parameters overlap.
+    pub fn insert_or_merge_pave_public(&mut self, pave: Pave) {
+        self.insert_or_merge_pave(pave);
+    }
+
     fn insert_or_merge_pave(&mut self, pave: Pave) {
         if let Some(existing) = self.paves.iter_mut().find(|existing| {
             existing.edge == pave.edge

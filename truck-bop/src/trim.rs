@@ -343,7 +343,7 @@ where
     bopds.boundary_edge_registry = registry;
 
     let raw_shells: Vec<Vec<Face<Point3, C, S>>> = if force_rebuild {
-        vec![rebuilt_faces]
+        group_faces_by_shared_vertices(rebuilt_faces)
     } else {
         sew_shell_faces(split_faces, rebuilt_faces)?
     };
@@ -364,7 +364,6 @@ where
     Ok((shells, prov))
 }
 
-#[allow(dead_code)]
 fn group_faces_by_shared_vertices<C, S>(
     faces: Vec<Face<Point3, C, S>>,
 ) -> Vec<Vec<Face<Point3, C, S>>>
@@ -1208,25 +1207,92 @@ where
 }
 
 /// Builds solids from shell components and verifies topology validity.
+///
+/// When multiple closed shells exist and one is geometrically contained within
+/// another, they are combined into a single solid with a cavity (outer + inner
+/// shell boundaries), matching OCCT's Cut behavior for contained operands.
 pub fn build_solids_from_shells<C, S>(
     shells: Vec<truck_topology::Shell<Point3, C, S>>,
 ) -> Result<Vec<Solid<Point3, C, S>>, BopError>
 where
     C: Clone,
     S: Clone, {
-    let mut solids = Vec::with_capacity(shells.len());
+    let mut valid_shells = Vec::new();
     for shell in shells {
         let condition = shell.shell_condition();
         match condition {
             ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {}
             _ => return Err(BopError::TopologyInvariantBroken),
         }
+        valid_shells.push(shell);
+    }
 
-        let solid = Solid::new_unchecked(vec![shell]);
-        solids.push(solid);
+    if valid_shells.len() <= 1 {
+        return Ok(valid_shells
+            .into_iter()
+            .map(|s| Solid::new_unchecked(vec![s]))
+            .collect());
+    }
+
+    let bboxes: Vec<_> = valid_shells
+        .iter()
+        .map(|shell| {
+            use truck_base::bounding_box::BoundingBox;
+            BoundingBox::from_iter(shell.vertex_iter().map(|v| v.point()))
+        })
+        .collect();
+
+    let mut used = vec![false; valid_shells.len()];
+    let mut solids = Vec::new();
+
+    for i in 0..valid_shells.len() {
+        if used[i] {
+            continue;
+        }
+        let mut boundaries = vec![];
+        let mut inner_indices = Vec::new();
+
+        for j in 0..valid_shells.len() {
+            if i == j || used[j] {
+                continue;
+            }
+            if bbox_contains(&bboxes[i], &bboxes[j]) {
+                inner_indices.push(j);
+            }
+        }
+
+        boundaries.push(valid_shells[i].clone());
+        used[i] = true;
+
+        for &j in &inner_indices {
+            boundaries.push(valid_shells[j].clone());
+            used[j] = true;
+        }
+
+        solids.push(Solid::new_unchecked(boundaries));
+    }
+
+    for (idx, shell) in valid_shells.into_iter().enumerate() {
+        if !used[idx] {
+            solids.push(Solid::new_unchecked(vec![shell]));
+        }
     }
 
     Ok(solids)
+}
+
+fn bbox_contains(outer: &truck_base::bounding_box::BoundingBox<Point3>, inner: &truck_base::bounding_box::BoundingBox<Point3>) -> bool {
+    let o_min = outer.min();
+    let o_max = outer.max();
+    let i_min = inner.min();
+    let i_max = inner.max();
+    let tol = 1.0e-9;
+    i_min.x >= o_min.x - tol
+        && i_min.y >= o_min.y - tol
+        && i_min.z >= o_min.z - tol
+        && i_max.x <= o_max.x + tol
+        && i_max.y <= o_max.y + tol
+        && i_max.z <= o_max.z + tol
 }
 
 fn collect_sewn_edges(
@@ -1595,7 +1661,10 @@ fn should_select_split_face(split_face: &SplitFace, operation: BooleanOp) -> boo
                     PointClassification::Outside | PointClassification::OnBoundary
                 )
             } else {
-                matches!(classification, PointClassification::OnBoundary)
+                matches!(
+                    classification,
+                    PointClassification::Inside | PointClassification::OnBoundary
+                )
             }
         }
         BooleanOp::Section => false,

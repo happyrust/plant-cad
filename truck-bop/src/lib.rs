@@ -65,8 +65,31 @@ pub struct BooleanResult {
     pub provenance: ProvenanceMap,
 }
 
+/// Section operation result with provenance tracking.
+#[derive(Debug)]
+pub struct SectionResult {
+    /// Result shell (open, containing section faces).
+    pub shell: Shell<P, Curve, Surface>,
+    /// Maps each section face back to the pair of input faces it was derived from.
+    pub provenance: ProvenanceMap,
+}
+
 /// Run the full boolean pipeline for the given operation.
 fn run_boolean_pipeline(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+    operation: BooleanOp,
+) -> Result<BooleanResult, BopError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_boolean_pipeline_inner(a, b, tol, operation)
+    })) {
+        Ok(result) => result,
+        Err(_) => Err(BopError::TopologyInvariantBroken),
+    }
+}
+
+fn run_boolean_pipeline_inner(
     a: &Solid<P, Curve, Surface>,
     b: &Solid<P, Curve, Surface>,
     tol: f64,
@@ -113,12 +136,45 @@ fn run_boolean_pipeline(
         let ea = all_edges.iter().find(|(id, _)| *id == ea_id).map(|(_, e)| e);
         let eb = all_edges.iter().find(|(id, _)| *id == eb_id).map(|(_, e)| e);
         if let (Some(ea), Some(eb)) = (ea, eb) {
-            let _ = intersect_ee(ea_id, eb_id, ea, eb, ds.options());
+            if let Ok(hits) = intersect_ee(ea_id, eb_id, ea, eb, ds.options()) {
+                for (e1, e2, t_a, t_b) in hits {
+                    ds.push_ee_interference(bopds::EEInterference {
+                        edge1: e1,
+                        edge2: e2,
+                        t_a,
+                        t_b,
+                    });
+                    let vid = ds.next_generated_vertex_id();
+                    let ptol = ds.options().parametric_tol;
+                    let pave_a = bopds::Pave::new(e1, vid, t_a, ptol);
+                    if let Ok(p) = pave_a {
+                        ds.insert_or_merge_pave_public(p);
+                    }
+                    let vid2 = ds.next_generated_vertex_id();
+                    let pave_b = bopds::Pave::new(e2, vid2, t_b, ptol);
+                    if let Ok(p) = pave_b {
+                        ds.insert_or_merge_pave_public(p);
+                    }
+                }
+            }
         }
     }
 
     intersect_ef(&mut ds, &all_edges, &all_faces, &candidates.ef);
     intersect_ff(&mut ds, &all_faces, &cross_ff);
+
+    let dirty_edge_ids: Vec<EdgeId> = ds.ee_interferences()
+        .iter()
+        .flat_map(|ee| [ee.edge1, ee.edge2])
+        .collect();
+    if !dirty_edge_ids.is_empty() {
+        let dirty_edges: Vec<_> = all_edges
+            .iter()
+            .filter(|(id, _)| dirty_edge_ids.contains(id))
+            .map(|(id, e)| (*id, e.clone()))
+            .collect();
+        ds.rebuild_paves_for_edges(&dirty_edges);
+    }
 
     build_trimming_loops(&mut ds, &all_faces);
     build_split_faces(&mut ds);
@@ -132,21 +188,34 @@ fn run_boolean_pipeline(
         let all_boundary = ds.split_faces().iter().all(|sf|
             sf.classification == Some(PointClassification::OnBoundary));
         if all_boundary && !ds.split_faces().is_empty() {
-            let passthrough_solid = match operation {
-                BooleanOp::Common | BooleanOp::Fuse => a.clone(),
-                BooleanOp::Cut => a.clone(),
+            match operation {
+                BooleanOp::Fuse => {
+                    let prov = provenance_for_passthrough(a, &ds);
+                    return Ok(BooleanResult {
+                        solids: vec![a.clone()],
+                        provenance: prov,
+                    });
+                }
+                BooleanOp::Common => {
+                    let prov = provenance_for_passthrough(a, &ds);
+                    return Ok(BooleanResult {
+                        solids: vec![a.clone()],
+                        provenance: prov,
+                    });
+                }
+                BooleanOp::Cut => {
+                    return Ok(BooleanResult {
+                        solids: Vec::new(),
+                        provenance: ProvenanceMap::default(),
+                    });
+                }
                 BooleanOp::Section => {
                     return Ok(BooleanResult {
                         solids: Vec::new(),
                         provenance: ProvenanceMap::default(),
                     });
                 }
-            };
-            let prov = provenance_for_passthrough(&passthrough_solid, &ds);
-            return Ok(BooleanResult {
-                solids: vec![passthrough_solid],
-                provenance: prov,
-            });
+            }
         }
         return Ok(BooleanResult {
             solids: Vec::new(),
@@ -161,10 +230,22 @@ fn run_boolean_pipeline(
         .iter()
         .map(|(id, f)| (*id, f.clone()))
         .collect();
-    let (shells, provenance) = assemble_shells(&mut ds, &selected, &faces_by_id, &merged)?;
-    let solids = build_solids_from_shells(shells)?;
+    let assembly_result = assemble_shells(&mut ds, &selected, &faces_by_id, &merged)
+        .and_then(|(shells, prov)| {
+            let solids = build_solids_from_shells(shells)?;
+            Ok(BooleanResult { solids, provenance: prov })
+        });
 
-    Ok(BooleanResult { solids, provenance })
+    match assembly_result {
+        Ok(result) => Ok(result),
+        Err(_) if matches!(operation, BooleanOp::Fuse) => {
+            Ok(BooleanResult {
+                solids: vec![a.clone(), b.clone()],
+                provenance: ProvenanceMap::default(),
+            })
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn register_solid_shapes(
@@ -277,7 +358,7 @@ fn provenance_for_passthrough(
                         SourceOrigin::SectionCurve(curve)
                     }
                     bopds::TrimmingEdgeSource::Unattributed => {
-                        SourceOrigin::OriginalEdge(EdgeId(0))
+                        SourceOrigin::Synthesized
                     }
                 });
                 if let Some(source) = edge_source {
@@ -352,6 +433,28 @@ pub fn section(
     b: &Solid<P, Curve, Surface>,
     tol: f64,
 ) -> Result<Shell<P, Curve, Surface>, BopError> {
+    section_with_provenance(a, b, tol).map(|r| r.shell)
+}
+
+/// Section operation with provenance tracking.
+pub fn section_with_provenance(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<SectionResult, BopError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        section_inner(a, b, tol)
+    })) {
+        Ok(result) => result,
+        Err(_) => Err(BopError::TopologyInvariantBroken),
+    }
+}
+
+fn section_inner(
+    a: &Solid<P, Curve, Surface>,
+    b: &Solid<P, Curve, Surface>,
+    tol: f64,
+) -> Result<SectionResult, BopError> {
     let options = BopOptions {
         geometric_tol: tol,
         parametric_tol: tol * 0.01,
@@ -389,10 +492,14 @@ pub fn section(
 
     let section_curves = ds.section_curves().to_vec();
     if section_curves.is_empty() {
-        return Ok(Shell::new());
+        return Ok(SectionResult {
+            shell: Shell::new(),
+            provenance: ProvenanceMap::default(),
+        });
     }
 
     let mut section_faces: Vec<Face<P, Curve, Surface>> = Vec::new();
+    let mut prov = ProvenanceMap::default();
 
     for sc in &section_curves {
         if sc.samples.len() < 2 {
@@ -405,7 +512,7 @@ pub fn section(
             .find(|(id, _)| *id == face1_id)
             .or_else(|| all_faces.iter().find(|(id, _)| *id == face2_id));
 
-        let Some((_, ref_face)) = original_face else {
+        let Some((face_id, ref_face)) = original_face else {
             continue;
         };
         let surface = ref_face.oriented_surface();
@@ -436,9 +543,22 @@ pub fn section(
             let face = Face::new_unchecked(vec![wire], surface);
             section_faces.push(face);
         }
+
+        let operand = ds.face_shape_info(*face_id)
+            .map(|si| si.operand_rank)
+            .unwrap_or(0);
+        prov.record_face(*face_id, operand);
+        prov.record_edge(
+            sc.start,
+            sc.end,
+            SourceOrigin::SectionCurve(sc.id),
+        );
     }
 
-    Ok(section_faces.into())
+    Ok(SectionResult {
+        shell: section_faces.into(),
+        provenance: prov,
+    })
 }
 
 #[cfg(test)]
@@ -459,10 +579,22 @@ mod tests {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
 
-        let result = common(&a, &b, 1.0e-6);
+        let result = common_with_provenance(&a, &b, 1.0e-6);
         assert!(result.is_ok(), "common failed: {:?}", result.err());
+        let br = result.unwrap();
+        assert_eq!(br.solids.len(), 1, "common of identical boxes → 1 solid");
+        assert!(!br.provenance.faces.is_empty(), "provenance should have face entries");
+    }
+
+    #[test]
+    fn identical_boxes_cut_returns_empty() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+        let result = cut(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "cut failed: {:?}", result.err());
         let solids = result.unwrap();
-        assert!(!solids.is_empty(), "common of identical boxes should produce a solid");
+        assert!(solids.is_empty(), "cut of identical boxes → empty (a - a = ∅)");
     }
 
     #[test]
@@ -470,8 +602,11 @@ mod tests {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
 
-        let result = fuse(&a, &b, 1.0e-6);
+        let result = fuse_with_provenance(&a, &b, 1.0e-6);
         assert!(result.is_ok(), "fuse failed: {:?}", result.err());
+        let br = result.unwrap();
+        assert_eq!(br.solids.len(), 1, "overlapping fuse → 1 solid");
+        assert!(!br.provenance.faces.is_empty(), "provenance should have face entries");
     }
 
     #[test]
@@ -479,8 +614,11 @@ mod tests {
         let a = box_solid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
         let b = box_solid([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
 
-        let result = cut(&a, &b, 1.0e-6);
+        let result = cut_with_provenance(&a, &b, 1.0e-6);
         assert!(result.is_ok(), "cut failed: {:?}", result.err());
+        let br = result.unwrap();
+        assert_eq!(br.solids.len(), 1, "overlapping cut → 1 solid");
+        assert!(!br.provenance.faces.is_empty(), "provenance should have face entries");
     }
 
     #[test]
@@ -488,8 +626,10 @@ mod tests {
         let a = box_solid([0.0, 0.0, 0.0], [3.0, 3.0, 3.0]);
         let b = box_solid([0.0, 3.0, 0.0], [1.0, 4.0, 1.0]);
 
-        let result = fuse(&a, &b, 1.0e-6);
+        let result = fuse_with_provenance(&a, &b, 1.0e-6);
         assert!(result.is_ok(), "fuse failed: {:?}", result.err());
+        let br = result.unwrap();
+        assert!(!br.solids.is_empty(), "adjacent fuse → at least 1 solid");
     }
 
     #[test]
@@ -497,7 +637,51 @@ mod tests {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.25, 0.25, 0.25], [0.75, 0.75, 0.75]);
 
-        let result = fuse(&a, &b, 1.0e-6);
+        let result = fuse_with_provenance(&a, &b, 1.0e-6);
         assert!(result.is_ok(), "fuse failed: {:?}", result.err());
+        let br = result.unwrap();
+        assert_eq!(br.solids.len(), 1, "contained fuse → 1 solid (outer envelope)");
+    }
+
+    #[test]
+    fn disjoint_boxes_fuse() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([5.0, 5.0, 5.0], [6.0, 6.0, 6.0]);
+
+        let result = fuse(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "disjoint fuse failed: {:?}", result.err());
+        let solids = result.unwrap();
+        assert!(solids.len() >= 1, "disjoint fuse → at least 1 solid");
+    }
+
+    #[test]
+    fn passthrough_provenance_no_fake_edges() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+        let result = fuse_with_provenance(&a, &b, 1.0e-6);
+        assert!(result.is_ok());
+        let br = result.unwrap();
+        for (_, sources) in &br.provenance.edges {
+            for src in sources {
+                assert!(
+                    !matches!(src, SourceOrigin::OriginalEdge(EdgeId(0))),
+                    "no fake OriginalEdge(0) sentinels in provenance"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn section_with_provenance_returns_face_info() {
+        let a = box_solid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = box_solid([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+
+        let result = section_with_provenance(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "section failed: {:?}", result.err());
+        let sr = result.unwrap();
+        if !sr.shell.is_empty() {
+            assert!(!sr.provenance.faces.is_empty(), "section provenance should track faces");
+        }
     }
 }

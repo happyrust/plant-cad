@@ -16,6 +16,9 @@ pub enum SourceOrigin {
     SectionCurve(SectionCurveId),
     /// Derived from an original face in the input solid.
     OriginalFace(FaceId),
+    /// Synthesized during loop repair or other internal operations;
+    /// no traceable input entity.
+    Synthesized,
 }
 
 /// Per-edge provenance: which source edges contributed to this output edge.

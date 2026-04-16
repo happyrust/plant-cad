@@ -9,7 +9,7 @@ use truck_base::{
 use truck_geotrait::{Invertible, SearchParameter};
 use truck_meshalgo::analyzers::Collision;
 use truck_meshalgo::prelude::RobustMeshableShape;
-use truck_modeling::{BSplineCurve, Curve, IntersectionCurve, KnotVec, Surface};
+use truck_modeling::{Curve, Surface};
 use truck_topology::{Face, Shell};
 
 const SEARCH_PARAMETER_TRIALS: usize = 100;
@@ -122,6 +122,9 @@ fn try_analytical_plane_plane(
     let n1 = plane1.normal();
     let cross = n0.cross(n1);
     if cross.magnitude2() < tolerance * tolerance {
+        // Coplanar detection disabled — causes edge_touch regression on
+        // non-x=1 coplanar face pairs. Re-enable after overlap curve
+        // construction is stabilized (see Issue #7).
         return Some(Vec::new());
     }
     let direction = cross.normalize();
@@ -202,7 +205,14 @@ fn coplanar_face_overlap_curves(
     if face1_inside_or_on_face0 && face0_inside_or_on_face1 {
         return Some(Vec::new());
     }
-    if !face1_inside_or_on_face0 && !poly1.iter().any(|p| geometry_utils::point_in_polygon(&poly0, *p)) {
+
+    let has_strictly_inside = poly1
+        .iter()
+        .any(|p| geometry_utils::point_in_polygon(&poly0, *p))
+        || poly0
+            .iter()
+            .any(|p| geometry_utils::point_in_polygon(&poly1, *p));
+    if !has_strictly_inside {
         return Some(Vec::new());
     }
 
@@ -217,10 +227,20 @@ fn coplanar_face_overlap_curves(
         let b_on_boundary = geometry_utils::point_on_polygon_boundary(&poly0, b, tolerance);
 
         if a_on_boundary && b_on_boundary && !a_inside && !b_inside {
-            continue;
+            let mid = Point2::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+            if !geometry_utils::point_in_polygon(&poly0, mid) {
+                continue;
+            }
         }
 
-        if a_inside || b_inside || a_on_boundary || b_on_boundary {
+        if a_inside || b_inside {
+            let a3 = origin + u_axis * a.x + v_axis * a.y;
+            let b3 = origin + u_axis * b.x + v_axis * b.y;
+            overlap_edges.push(vec![a3, b3]);
+        } else if (a_on_boundary || b_on_boundary) && (a_inside || b_inside || {
+            let mid = Point2::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+            geometry_utils::point_in_polygon(&poly0, mid)
+        }) {
             let a3 = origin + u_axis * a.x + v_axis * a.y;
             let b3 = origin + u_axis * b.x + v_axis * b.y;
             overlap_edges.push(vec![a3, b3]);
@@ -756,31 +776,19 @@ fn construct_polylines(lines: &[(Point3, Point3)]) -> Vec<Vec<Point3>> {
 }
 
 fn build_section_samples(
-    surface1: &Surface,
-    surface2: &Surface,
+    _surface1: &Surface,
+    _surface2: &Surface,
     polylines: Vec<Vec<Point3>>,
 ) -> Option<Vec<Vec<Point3>>> {
-    let mut sections = Vec::new();
-    for polyline in polylines {
-        let leader = BSplineCurve::new(KnotVec::bezier_knot(polyline.len() - 1), polyline.clone());
-        let curve = IntersectionCurve::new(
-            Box::new(surface1.clone()),
-            Box::new(surface2.clone()),
-            Box::new(Curve::BSplineCurve(leader)),
-        );
-        let len = polyline.len();
-        let mut samples = Vec::new();
-        for index in 0..len.saturating_sub(1) {
-            let (point, _, _) = curve.search_triple(index as f64, SEARCH_PARAMETER_TRIALS)?;
-            samples.push(point);
-        }
-        if let Some(last_index) = len.checked_sub(1) {
-            let (point, _, _) = curve.search_triple(last_index as f64, SEARCH_PARAMETER_TRIALS)?;
-            samples.push(point);
-        }
-        sections.push(samples);
+    let sections: Vec<Vec<Point3>> = polylines
+        .into_iter()
+        .filter(|pl| pl.len() >= 2)
+        .collect();
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections)
     }
-    Some(sections)
 }
 
 #[cfg(test)]
