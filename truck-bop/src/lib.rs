@@ -327,6 +327,27 @@ fn remove_coplanar_duplicates(
             if selected[i].original_face == selected[j].original_face {
                 continue;
             }
+            // Co-planarity alone is not enough: two faces can lie on the same
+            // plane but occupy disjoint regions (adjacent-boxes scenario where
+            // A's x=0 face at y∈[0,3] touches B's x=0 face at y∈[3,4] along
+            // y=3 but never overlaps). Confirm the two split fragments actually
+            // share 3D region before considering them duplicates by comparing
+            // their representative points; if either is missing or they are far
+            // apart in absolute terms, treat them as distinct.
+            let overlap_radius = (tolerance * 1.0e3).max(1.0e-3);
+            let overlap_radius2 = overlap_radius * overlap_radius;
+            match (
+                selected[i].representative_point,
+                selected[j].representative_point,
+            ) {
+                (Some(rp_i), Some(rp_j)) => {
+                    use truck_base::cgmath64::MetricSpace;
+                    if rp_i.distance2(rp_j) > overlap_radius2 {
+                        continue;
+                    }
+                }
+                _ => continue,
+            }
             if selected[j].operand_rank > selected[i].operand_rank {
                 to_remove[j] = true;
             } else {
