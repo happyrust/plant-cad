@@ -43,6 +43,7 @@ None.
    - run `cargo test -p truck-bop` whenever the feature claims crate-level safety or finishes a milestone boundary
 7. Keep the mission priorities explicit:
    - first legality / closed-shell / exact solid-count
+   - if strict invariant sentinels regress inside the same files you are debugging, restore those gates before continuing with downstream overlap/tangent repair
    - then preserve named box-box sentinels
    - only then tighten toward OCCT topology parity
 8. Do not accept fallback as success when the contract requires one closed merged solid:
