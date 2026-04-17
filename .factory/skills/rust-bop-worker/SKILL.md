@@ -48,6 +48,7 @@ None.
    - only then tighten toward OCCT topology parity
 8. Do not accept fallback as success when the contract requires one closed merged solid:
    - overlap/tangent `fuse` cases that fall back to multi-solid passthrough are failures
+   - when debugging an overlap/tangent fuse path, add or preserve a regression that proves passthrough fallback is not masking the real failure
    - do not weaken shell/solid gates to make a row print PASS
 9. In the handoff, include exact commands, exit codes, changed files, added tests/example rows, and any blockers or discovered issues.
 
