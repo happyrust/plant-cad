@@ -51,6 +51,7 @@ None.
    - overlap/tangent `fuse` cases that fall back to multi-solid passthrough are failures
    - when debugging an overlap/tangent fuse path, add or preserve a regression that proves passthrough fallback is not masking the real failure
    - do not weaken shell/solid gates to make a row print PASS
+   - if the blocker is `TopologyInvariantBroken` in `assemble_shells` / `sew_shell_faces`, add temporary targeted instrumentation/assertions to identify the non-orientable component before attempting broader refactors
 9. In the handoff, include exact commands, exit codes, changed files, added tests/example rows, and any blockers or discovered issues.
 
 ## Example Handoff
