@@ -33,7 +33,8 @@ None.
 4. Implement the smallest safe slice that moves the feature forward.
 5. Preserve worktree safety:
    - do not revert unrelated edits
-   - if unexpected overlapping changes appear, stop and return to the orchestrator
+   - if unexpected overlapping changes appear outside the approved mission baseline, stop and return to the orchestrator
+   - if the mission AGENTS file marks specific dirty `truck-bop` files as approved in-scope baseline, you may continue on top of them and commit the resulting feature work
 6. Run cargo verification in layers:
    - always run a targeted command for the feature
    - run `cargo test -p truck-bop --no-run` when touching signatures, module wiring, or test layout
