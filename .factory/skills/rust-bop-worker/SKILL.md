@@ -54,6 +54,7 @@ None.
    - do not weaken shell/solid gates to make a row print PASS
    - if the blocker is `TopologyInvariantBroken` in `assemble_shells` / `sew_shell_faces`, add temporary targeted instrumentation/assertions to identify the non-orientable component before attempting broader refactors
    - for overlap/adjacent shell-rebuild blockers, make that instrumentation-only checkpoint your first implementation slice before trying adjacency/grouping refactors
+   - if the force-rebuild path bypasses `sew_shell_faces` / `orient_face_against_shell`, instrument the force-rebuild grouping branch itself (for example `group_faces_by_shared_vertices`) so you still capture the first failing component and shell condition
    - do not use `git checkout <old-commit> -- <file>` on evolving mission files unless you have first confirmed API compatibility with the current branch and can restore the current baseline state safely
 9. In the handoff, include exact commands, exit codes, changed files, added tests/example rows, and any blockers or discovered issues.
 
