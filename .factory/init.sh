@@ -1,8 +1,13 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env python3
+import subprocess
 
-rustc --version
-cargo --version
-cargo metadata --no-deps >/dev/null
 
-echo "truck-bop sphere-box mission environment ready (no external services required)"
+def run(command: list[str]) -> None:
+    subprocess.run(command, check=True)
+
+
+run(["rustc", "--version"])
+run(["cargo", "--version"])
+run(["cargo", "metadata", "--no-deps"])
+
+print("truck-bop sphere-box mission environment ready (no external services required)")
