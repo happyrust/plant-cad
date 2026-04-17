@@ -1,40 +1,56 @@
 # User Testing
 
-Testing surface and validation approach for truck-bop.
-
-**What belongs here:** Test execution details, validation surface info, resource constraints.
+Validation surface and execution guidance for the `truck-bop` real sphere + box boolean mission.
 
 ---
 
 ## Validation Surface
 
-**Surface:** Command-line (cargo test)
+**Surface:** Cargo CLI only (`truck-bop` crate)
 
-**Tools:**
-- cargo test -p truck-bop
-- cargo check -p truck-bop
-- cargo clippy -p truck-bop
+**Primary commands:**
+- `cargo test -p truck-bop --no-run`
+- targeted exact tests: `cargo test -p truck-bop <name> -- --exact`
+- `cargo check -p truck-bop`
+- `cargo test -p truck-bop`
+- `cargo run -p truck-bop --example bool_occt_verify`
 
 **Approach:**
-- Unit tests verify individual algorithms
-- Integration tests verify end-to-end boolean operations
-- TDD: write failing tests first, then implement
+- use targeted exact validators as the primary proof for sphere-box legality, closed-shell, and exact solid-count assertions
+- use `bool_occt_verify` as the named matrix / regression surface
+- use `cargo test -p truck-bop --no-run` before broader runs when signatures or module layout change
+- reserve full `cargo test -p truck-bop` for milestone gates or features claiming crate-level safety
 
 ## Validation Concurrency
 
-**Max concurrent validators:** 5
+**Max concurrent validators:** 2
 
-**Rationale:** Tests are CPU-bound. Machine has 12 cores with sufficient memory. 5 concurrent test processes provide good parallelism without overloading.
+**Rationale:**
+- this mission has one Cargo-based validation surface, but it contains two useful concurrent lanes:
+  - a targeted test lane
+  - the example-matrix lane
+- Cargo shares the same workspace target directory, so concurrency above 2 is likely to add compile and disk contention rather than signal
+- dry-run observations showed the environment is capable of running the surface, but a conservative cap of 2 best balances speed and stability
 
-**Resource profile:**
-- Each test process: ~200MB RAM, 1-2 CPU cores
-- Total for 5 concurrent: ~1GB RAM, 5-10 cores
-- Well within machine capacity
+## Validation Readiness Notes
 
-## Flow Validator Guidance: cli
+**Dry-run summary:**
+- `cargo test -p truck-bop --example bool_occt_verify --no-run` succeeded
+- `cargo run -p truck-bop --example bool_occt_verify` succeeded
+- the current matrix already reports box-box PASS/DIFF rows, so the validation path is executable
 
-- Stay on the CLI surface; validate behavior through `cargo test` and `cargo check` only.
-- Do not modify source files or workspace configuration during flow validation.
-- Prefer `cargo test -p truck-bop -- --list` first when exact unit test names are unclear, then rerun with fully-qualified names and `--exact`.
-- Write evidence only under the assigned mission evidence directory and flow report path.
-- Treat cargo warning noise as non-blocking unless it changes command exit status or masks assertion-specific failures.
+**Current known mission gap:**
+- `bool_occt_verify` does not yet contain the required sphere-box rows; adding them is part of this mission
+
+## Flow Validator Guidance: cli-cargo
+
+- Stay on the Rust/Cargo surface only.
+- Do not start any local service or GUI application.
+- Evidence must cite exact assertion IDs and the exact command used.
+- For sphere-box assertions, prefer named targeted tests such as:
+  - `box_sphere_overlap_*`
+  - `box_sphere_contained_*`
+  - `box_sphere_tangent_*`
+  - `box_sphere_section_smoke_runs`
+- For regression assertions, use `cargo run -p truck-bop --example bool_occt_verify` and verify the named rows required by the validation contract.
+- Treat warnings as non-blocking unless they change exit status or make the row/assertion evidence ambiguous.

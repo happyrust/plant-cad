@@ -1,7 +1,8 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# No special initialization needed for truck-bop
-# Pure Rust library with no external dependencies
+rustc --version
+cargo --version
+cargo metadata --no-deps >/dev/null
 
-echo "truck-bop environment ready"
+echo "truck-bop sphere-box mission environment ready (no external services required)"

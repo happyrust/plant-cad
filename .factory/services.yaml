@@ -1,8 +1,10 @@
 commands:
   install: cargo build -p truck-bop
-  test: cargo test -p truck-bop
   check: cargo check -p truck-bop
-  lint: echo "Skipping clippy due to known pre-existing issues in other workspace crates"
-  typecheck: cargo check -p truck-bop
+  typecheck: cargo test -p truck-bop --no-run
+  test: cargo test -p truck-bop
+  lint: cargo check -p truck-bop
+  example_matrix: cargo run -p truck-bop --example bool_occt_verify
+  section_smoke: cargo test -p truck-bop box_sphere_section_smoke_runs -- --exact
 
 services: {}
