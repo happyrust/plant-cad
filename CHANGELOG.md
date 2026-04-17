@@ -42,6 +42,18 @@ The version is of the bottom crate `truck-rendimpl`.
 - **fix(api):** passthrough 路径的 edge provenance 补全：使用真实 `TrimmingEdge` 来源（`OriginalBoundaryEdge` / `SectionSegment`），不再使用合成 ID。
 - **fix(trim):** `build_trimming_loops()` 容差不再混合 `parametric_tol.max(geometric_tol)`，统一使用 `geometric_tol`，避免 UV/3D 空间容差混淆。
 - **feat(trim):** 新增 `group_faces_by_shared_vertices()` 基于 Vertex ID 的 union-find 连通分量分组（为 force_rebuild 多 shell 预留）。
+- **refactor(trim):** `force_rebuild` 路径统一走 `sew_shell_faces`，移除 `group_faces_by_shared_vertices()` 这种 shared-vertex 启发式分组；shell 条件收紧为**仅接受 `Closed`**，并对所有 Closed shell 强制 `validate_shell_orientation`，消除 Regular/Oriented 兜底带来的不变量漂移。
+- **feat(trim):** 新增 `CanonicalRebuiltEdge::SharedBoundary(v1,v2)` 身份变体：当一条边非 section curve 且被多个 face 共享时，取代 `OpenBoundary(face,…)`，让跨 face 的缝合边在 canonical 比较中自然等价。
+- **fix(trim):** `canonical_edges_share_identity()` 对 `SectionSegment` 特化为只比较 `curve` id（忽略 `segment_index`），允许同一 section curve 的不同 segment 视为同一身份，修复大面被 section curve 切开后 segment 级 component 分裂的 bug。
+- **feat(trim):** 新增 `split_faces_share_component_boundary()` 邻接判定：除了 `share_orientable_edge` 与 `share_vertex` 外，跨 `original_face` 的边界边若 canonical 身份一致也视为同连通分量，修复 EE 管线分裂后的 face 孤岛。
+- **fix(fclass2d):** `adjust_to_range()` 周期调整改用硬边界 `v < lo` / `v > hi`，移除原 `0.5 * period` 松弛窗口，修复 u 周期 seam 上的点（例如 `u=1.0` / `u=2.0`）被错误归为 Inside 而非 OnBoundary；新增 `periodic_seam_boundary_is_on_boundary` 回归测试。
+- **feat(intersect):** 新增 `try_analytical_plane_revoluted()` 平面-旋转面解析求交快路径：UV 32×32 网格按平面方程符号变号定位交叉点，容差过滤后作为 plane-revoluted 共线交点序列返回，替代部分 mesh-based 回退。
+- **fix(api):** `run_boolean_pipeline_inner()` 在 `Cut` 且 `ds.split_faces` 全部 OnBoundary 时直接返回**空 BooleanResult**（`a − a = ∅`），不再走 Fuse/Common 同款 passthrough 分支；新增 `boundary_only_cut_returns_empty_result` 回归测试锁死行为。
+- **refactor(api):** 移除 `Fuse` 的 assembly 失败兜底（之前在 `Err(_)` 时返回 `[a, b]` passthrough solids），改为将装配错误原样上抛；新增 `overlapping_boxes_fuse_does_not_fallback_to_passthrough_solids` 回归测试，防止未来再退化为双 solid 透传。
+- **test(examples):** `bool_verify` 增加 `run_with_timeout` 超时保护（避免挂死阻塞整批验证），补齐 `cyl_cyl_fuse` 等曲面-曲面 fuse case，并保留 `_sphere_solid()` 预留供后续球面验证。
+- **test(examples):** 新增 `bool_occt_verify.rs`（未跟踪时已存在），用于与 OCCT 同 case 的布尔结果旁证。
+- **docs:** 同步更新 `docs/truck-bop-architecture.md` 的 trim 管线图与边身份说明；刷新 `docs/diagrams/trim-data-model.svg` 与 `trim-pipeline.svg`。
+- **docs(plans):** 新增 `docs/plans/2026-04-10-current-boolean-ops-architecture.excalidraw`（当前布尔管线架构快照）与 `docs/plans/2026-04-13-truck-bop-next-steps.md`（后续开发计划）。
 
 ### Other
 

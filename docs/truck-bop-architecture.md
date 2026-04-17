@@ -38,17 +38,21 @@ flowchart TB
     split --> classify --> select --> merge --> sew --> assemble --> build
 ```
 
+
+
 ## 模块职责
 
 ### 1. 公共 API (`lib.rs`)
 
-| 函数 | 返回值 | 说明 |
-|------|--------|------|
-| `common(a, b, tol)` | `Vec<Solid>` | 两 solid 交集 |
-| `fuse(a, b, tol)` | `Vec<Solid>` | 两 solid 并集 |
-| `cut(a, b, tol)` | `Vec<Solid>` | a 减去 b |
-| `section(a, b, tol)` | `Shell` | 交线面片（开壳） |
-| `*_with_provenance()` | `BooleanResult` | 带溯源信息的变体 |
+
+| 函数                    | 返回值             | 说明         |
+| --------------------- | --------------- | ---------- |
+| `common(a, b, tol)`   | `Vec<Solid>`    | 两 solid 交集 |
+| `fuse(a, b, tol)`     | `Vec<Solid>`    | 两 solid 并集 |
+| `cut(a, b, tol)`      | `Vec<Solid>`    | a 减去 b     |
+| `section(a, b, tol)`  | `Shell`         | 交线面片（开壳）   |
+| `*_with_provenance()` | `BooleanResult` | 带溯源信息的变体   |
+
 
 ### 2. BopDs 数据结构 (`bopds/`)
 
@@ -99,18 +103,22 @@ classDiagram
     SplitFace --> TrimmingLoop
 ```
 
+
+
 ### 3. 求交层 (`intersect/`)
 
 六级渐进求交，对应 OCCT 的 `BOPAlgo_PaveFiller`:
 
-| 级别 | 文件 | 算法 |
-|------|------|------|
-| VV | `vv.rs` | 坐标距离比较 |
-| VE | `ve.rs` | 点到边曲线投影 |
-| VF | `vf.rs` | 点到面参数投影 |
-| EE | `ee.rs` | 边-边最近点对 |
-| EF | `ef.rs` | 边-面交点检测 |
-| FF | `ff.rs` | 面-面交线（解析平面快速路径 + mesh fallback） |
+
+| 级别  | 文件      | 算法                              |
+| --- | ------- | ------------------------------- |
+| VV  | `vv.rs` | 坐标距离比较                          |
+| VE  | `ve.rs` | 点到边曲线投影                         |
+| VF  | `vf.rs` | 点到面参数投影                         |
+| EE  | `ee.rs` | 边-边最近点对                         |
+| EF  | `ef.rs` | 边-面交点检测                         |
+| FF  | `ff.rs` | 面-面交线（解析平面快速路径 + mesh fallback） |
+
 
 ### 4. 面重建层 (`trim.rs`)
 
@@ -140,7 +148,10 @@ flowchart LR
     LoopBuild --> FaceRebuild --> ShellAssembly
 ```
 
+
+
 关键组件：
+
 - **TopologyCache**: 跨面共享顶点/边对象，使用坐标去重（10× tolerance snap）
 - **VertexIdAllocator**: 类型安全的 vertex ID 分配器
 - **FClass2d**: UV 空间点-面分类器，支持多 wire + 周期性参数域
@@ -194,14 +205,18 @@ flowchart LR
     IntTools -.->|"FClass2d"| FClass2dRS
 ```
 
+
+
 ## 选择逻辑
 
-| 操作 | operand 0 | operand 1 |
-|------|-----------|-----------|
-| Common | Inside + OnBoundary | Inside |
-| Fuse | Outside + OnBoundary | Outside |
-| Cut | Outside + OnBoundary | OnBoundary |
-| Section | (交线面片) | (交线面片) |
+
+| 操作      | operand 0            | operand 1  |
+| ------- | -------------------- | ---------- |
+| Common  | Inside + OnBoundary  | Inside     |
+| Fuse    | Outside + OnBoundary | Outside    |
+| Cut     | Outside + OnBoundary | OnBoundary |
+| Section | (交线面片)               | (交线面片)     |
+
 
 ## 已知限制
 
@@ -212,14 +227,17 @@ flowchart LR
 
 ## 文件大小分布
 
-| 文件 | 大小 | 职责 |
-|------|------|------|
-| `trim.rs` | 190KB | 面重建/分类/选择/装配 |
-| `bopds/mod.rs` | 39KB | BopDs 核心数据结构 |
-| `intersect/ff.rs` | 32KB | 面-面交线 |
-| `pipeline.rs` | 23KB | 点分类器 |
-| `bopds/interference.rs` | 19KB | 干涉数据类型 |
-| `intersect/ef.rs` | 15KB | 边-面交点 |
-| `broad_phase.rs` | 13KB | 宽相位筛选 |
-| `lib.rs` | 14KB | 公共 API + 管线 |
-| `fclass2d.rs` | 6KB | UV 分类器 |
+
+| 文件                      | 大小    | 职责           |
+| ----------------------- | ----- | ------------ |
+| `trim.rs`               | 190KB | 面重建/分类/选择/装配 |
+| `bopds/mod.rs`          | 39KB  | BopDs 核心数据结构 |
+| `intersect/ff.rs`       | 32KB  | 面-面交线        |
+| `pipeline.rs`           | 23KB  | 点分类器         |
+| `bopds/interference.rs` | 19KB  | 干涉数据类型       |
+| `intersect/ef.rs`       | 15KB  | 边-面交点        |
+| `broad_phase.rs`        | 13KB  | 宽相位筛选        |
+| `lib.rs`                | 14KB  | 公共 API + 管线  |
+| `fclass2d.rs`           | 6KB   | UV 分类器       |
+
+

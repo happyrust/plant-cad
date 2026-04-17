@@ -11,6 +11,21 @@ fn box_solid(min: [f64; 3], max: [f64; 3]) -> Solid<P, Curve, Surface> {
     ]))
 }
 
+fn _sphere_solid(center: P, radius: f64, division: usize) -> Solid<P, Curve, Surface> {
+    use truck_base::cgmath64::Rad;
+    let axis = Vector3::new(0.0, 0.0, 1.0);
+    let start = center + Vector3::new(radius, 0.0, 0.0);
+    let circle_wire: truck_topology::Wire<P, Curve> = primitive::circle(start, center, axis, division);
+    let shell: truck_topology::Shell<P, Curve, Surface> = builder::rsweep(
+        &circle_wire,
+        center,
+        Vector3::new(0.0, 1.0, 0.0),
+        Rad(std::f64::consts::TAU),
+        division,
+    );
+    Solid::new(vec![shell])
+}
+
 fn cylinder_solid(center: P, radius: f64, height: f64, division: usize) -> Solid<P, Curve, Surface> {
     let axis = Vector3::new(0.0, 0.0, 1.0);
     let start = center + Vector3::new(radius, 0.0, 0.0);
@@ -18,6 +33,25 @@ fn cylinder_solid(center: P, radius: f64, height: f64, division: usize) -> Solid
     let disk: truck_topology::Face<P, Curve, Surface> = builder::try_attach_plane(&[circle_wire]).unwrap();
     let solid: Solid<P, Curve, Surface> = builder::tsweep(&disk, axis * height);
     solid
+}
+
+fn run_with_timeout<F, R>(name: &str, f: F, timeout_secs: u64) -> Option<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = f();
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(timeout_secs)) {
+        Ok(r) => Some(r),
+        Err(_) => {
+            println!("[TIMEOUT] {:<22} → exceeded {}s", name, timeout_secs);
+            None
+        }
+    }
 }
 
 fn main() {
@@ -96,12 +130,38 @@ fn main() {
             let b = cylinder_solid(P::new(0.0, 0.0, 0.0), 1.0, 3.0, 8);
             truck_bop::cut(&a, &b, tol)
         })),
+        ("cyl_cyl_fuse", Box::new(|| {
+            let a = cylinder_solid(P::new(0.0, 0.0, 0.0), 1.0, 2.0, 8);
+            let b = cylinder_solid(P::new(0.5, 0.0, 0.0), 1.0, 2.0, 8);
+            truck_bop::fuse(&a, &b, tol)
+        })),
+        ("cyl_cyl_common", Box::new(|| {
+            let a = cylinder_solid(P::new(0.0, 0.0, 0.0), 1.0, 2.0, 8);
+            let b = cylinder_solid(P::new(0.5, 0.0, 0.0), 1.0, 2.0, 8);
+            truck_bop::common(&a, &b, tol)
+        })),
+        ("offset_box_fuse", Box::new(|| {
+            let a = box_solid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+            let b = box_solid([0.5, 0.5, 0.5], [2.5, 2.5, 2.5]);
+            truck_bop::fuse(&a, &b, tol)
+        })),
+        ("offset_box_cut", Box::new(|| {
+            let a = box_solid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+            let b = box_solid([0.5, 0.5, 0.5], [2.5, 2.5, 2.5]);
+            truck_bop::cut(&a, &b, tol)
+        })),
     ];
 
     for (name, f) in &cases {
-        match f() {
-            Ok(solids) => println!("[PASS] {:<22} → {} solid(s)", name, solids.len()),
-            Err(e) => println!("[FAIL] {:<22} → {:?}", name, e),
+        let start = std::time::Instant::now();
+        let result = f();
+        let elapsed = start.elapsed();
+        if elapsed.as_secs() > 10 {
+            println!("[SLOW] {:<22} → {:.1}s", name, elapsed.as_secs_f64());
+        }
+        match result {
+            Ok(solids) => println!("[PASS] {:<22} → {} solid(s) ({:.1}s)", name, solids.len(), elapsed.as_secs_f64()),
+            Err(e) => println!("[FAIL] {:<22} → {:?} ({:.1}s)", name, e, elapsed.as_secs_f64()),
         }
     }
 
@@ -119,9 +179,12 @@ fn main() {
         })),
     ];
     for (name, f) in &section_cases {
-        match f() {
-            Ok(shell) => println!("[PASS] {:<22} → {} face(s)", name, shell.len()),
-            Err(e) => println!("[FAIL] {:<22} → {:?}", name, e),
+        let start = std::time::Instant::now();
+        let result = f();
+        let elapsed = start.elapsed();
+        match result {
+            Ok(shell) => println!("[PASS] {:<22} → {} face(s) ({:.1}s)", name, shell.len(), elapsed.as_secs_f64()),
+            Err(e) => println!("[FAIL] {:<22} → {:?} ({:.1}s)", name, e, elapsed.as_secs_f64()),
         }
     }
 

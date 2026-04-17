@@ -184,10 +184,17 @@ fn run_boolean_pipeline_inner(
 
     let selected = select_split_faces_for_boolean_op(&ds, operation);
     let selected = remove_coplanar_duplicates(selected, &all_faces, ds.options().geometric_tol);
-    if selected.is_empty() {
-        let all_boundary = ds.split_faces().iter().all(|sf|
+    let all_ds_boundary = !ds.split_faces().is_empty()
+        && ds.split_faces().iter().all(|sf|
             sf.classification == Some(PointClassification::OnBoundary));
-        if all_boundary && !ds.split_faces().is_empty() {
+    if matches!(operation, BooleanOp::Cut) && all_ds_boundary {
+        return Ok(BooleanResult {
+            solids: Vec::new(),
+            provenance: ProvenanceMap::default(),
+        });
+    }
+    if selected.is_empty() {
+        if all_ds_boundary {
             match operation {
                 BooleanOp::Fuse => {
                     let prov = provenance_for_passthrough(a, &ds);
@@ -238,12 +245,6 @@ fn run_boolean_pipeline_inner(
 
     match assembly_result {
         Ok(result) => Ok(result),
-        Err(_) if matches!(operation, BooleanOp::Fuse) => {
-            Ok(BooleanResult {
-                solids: vec![a.clone(), b.clone()],
-                provenance: ProvenanceMap::default(),
-            })
-        }
         Err(e) => Err(e),
     }
 }
@@ -598,6 +599,19 @@ mod tests {
     }
 
     #[test]
+    fn boundary_only_cut_returns_empty_result() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+
+        let result = cut(&a, &b, 1.0e-6);
+        assert!(result.is_ok(), "boundary-only cut failed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_empty(),
+            "boundary-only cut should return an empty neutral result"
+        );
+    }
+
+    #[test]
     fn overlapping_boxes_fuse() {
         let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = box_solid([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
@@ -607,6 +621,18 @@ mod tests {
         let br = result.unwrap();
         assert_eq!(br.solids.len(), 1, "overlapping fuse → 1 solid");
         assert!(!br.provenance.faces.is_empty(), "provenance should have face entries");
+    }
+
+    #[test]
+    fn overlapping_boxes_fuse_does_not_fallback_to_passthrough_solids() {
+        let a = box_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = box_solid([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
+
+        let result = fuse_with_provenance(&a, &b, 1.0e-6);
+        assert!(
+            !matches!(result, Ok(BooleanResult { solids, provenance }) if solids.len() == 2 && provenance.faces.is_empty()),
+            "overlapping fuse must not degrade to passthrough fallback",
+        );
     }
 
     #[test]

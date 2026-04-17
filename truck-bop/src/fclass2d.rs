@@ -113,10 +113,10 @@ impl FClass2d {
 
 fn adjust_to_range(val: f64, lo: f64, hi: f64, period: f64) -> f64 {
     let mut v = val;
-    while v < lo - 0.5 * period {
+    while v < lo {
         v += period;
     }
-    while v > hi + 0.5 * period {
+    while v > hi {
         v -= period;
     }
     v
@@ -258,6 +258,28 @@ mod tests {
         assert_eq!(
             fc.classify(Point2::new(1.5, 0.5)),
             PointClassification::Inside
+        );
+    }
+
+    #[test]
+    fn periodic_seam_boundary_is_on_boundary() {
+        let outer = square_polygon();
+        let uv_bounds = compute_uv_bounds(&outer);
+        let fc = FClass2d {
+            outer_polygon: outer,
+            hole_polygons: vec![],
+            u_period: Some(1.0),
+            v_period: None,
+            uv_bounds,
+            tolerance: 1.0e-9,
+        };
+        assert_eq!(
+            fc.classify(Point2::new(1.0, 0.5)),
+            PointClassification::OnBoundary
+        );
+        assert_eq!(
+            fc.classify(Point2::new(2.0, 0.5)),
+            PointClassification::OnBoundary
         );
     }
 

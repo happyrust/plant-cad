@@ -41,6 +41,10 @@ pub fn intersect_ff(
             try_analytical_plane_plane(face1, face2, tolerance)
         {
             Some(curves)
+        } else if let Some(curves) =
+            try_analytical_plane_revoluted(face1, face2, tolerance)
+        {
+            Some(curves)
         } else {
             mesh_based_intersection(face1, face2, tolerance)
         };
@@ -499,6 +503,115 @@ fn intersect_ranges(a: &[(f64, f64)], b: &[(f64, f64)]) -> Vec<(f64, f64)> {
     result
 }
 
+// ── Analytical plane-revoluted intersection ─────────────────────────────────
+
+fn try_analytical_plane_revoluted(
+    face0: &Face<Point3, Curve, Surface>,
+    face1: &Face<Point3, Curve, Surface>,
+    tolerance: f64,
+) -> Option<Vec<Vec<Point3>>> {
+    use truck_base::cgmath64::{EuclideanSpace, InnerSpace};
+    use truck_geotrait::ParametricSurface;
+
+    let (_plane_face, _rev_face) = match (face0.oriented_surface(), face1.oriented_surface()) {
+        (Surface::Plane(_), Surface::RevolutedCurve(_)) => (face0, face1),
+        (Surface::RevolutedCurve(_), Surface::Plane(_)) => (face1, face0),
+        _ => return None,
+    };
+
+    let plane = match _plane_face.oriented_surface() {
+        Surface::Plane(p) => p,
+        _ => return None,
+    };
+    let rev_surface = _rev_face.oriented_surface();
+    let n = plane.normal();
+    let d = n.dot(plane.origin().to_vec());
+
+    let ((u_min, u_max), (v_min, v_max)) = match rev_surface.try_range_tuple() {
+        (Some(ur), Some(vr)) => (ur, vr),
+        _ => return None,
+    };
+
+    const UV_DIVISIONS: usize = 32;
+
+    let mut crossings: Vec<Point3> = Vec::new();
+
+    for u_step in 0..UV_DIVISIONS {
+        let u0 = u_min + (u_max - u_min) * u_step as f64 / UV_DIVISIONS as f64;
+        let u1 = u_min + (u_max - u_min) * (u_step + 1) as f64 / UV_DIVISIONS as f64;
+        for v_step in 0..UV_DIVISIONS {
+            let v0 = v_min + (v_max - v_min) * v_step as f64 / UV_DIVISIONS as f64;
+            let v1 = v_min + (v_max - v_min) * (v_step + 1) as f64 / UV_DIVISIONS as f64;
+
+            let p00 = rev_surface.subs(u0, v0);
+            let p10 = rev_surface.subs(u1, v0);
+            let p01 = rev_surface.subs(u0, v1);
+            let p11 = rev_surface.subs(u1, v1);
+
+            let d00 = n.dot(p00.to_vec()) - d;
+            let d10 = n.dot(p10.to_vec()) - d;
+            let d01 = n.dot(p01.to_vec()) - d;
+            let d11 = n.dot(p11.to_vec()) - d;
+
+            let edges_to_check: [(f64, f64, f64, f64, Point3, Point3); 4] = [
+                (u0, v0, u1, v0, p00, p10),
+                (u1, v0, u1, v1, p10, p11),
+                (u0, v1, u1, v1, p01, p11),
+                (u0, v0, u0, v1, p00, p01),
+            ];
+            let dists = [d00, d10, d11, d01];
+
+            for (idx, &(su, sv, eu, ev, _sp, _ep)) in edges_to_check.iter().enumerate() {
+                let ds = dists[idx];
+                let de = dists[(idx + 1) % 4];
+                if ds * de < 0.0 {
+                    let t = ds / (ds - de);
+                    let u = su + t * (eu - su);
+                    let v = sv + t * (ev - sv);
+                    let pt = rev_surface.subs(u, v);
+                    if (n.dot(pt.to_vec()) - d).abs() < tolerance * 100.0 {
+                        let dominated = crossings.iter().any(|c| c.distance2(pt) < tolerance * tolerance * 4.0);
+                        if !dominated {
+                            crossings.push(pt);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if crossings.len() < 2 {
+        return Some(Vec::new());
+    }
+
+    crossings.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)).then(a.z.total_cmp(&b.z)));
+    let mut deduped = vec![crossings[0]];
+    for &p in &crossings[1..] {
+        if p.distance2(*deduped.last().unwrap()) > tolerance * tolerance * 4.0 {
+            deduped.push(p);
+        }
+    }
+
+    if deduped.len() < 2 {
+        return Some(Vec::new());
+    }
+
+    let mut ordered = vec![deduped.remove(0)];
+    while !deduped.is_empty() {
+        let last = *ordered.last().unwrap();
+        let (nearest_idx, _) = deduped.iter().enumerate()
+            .min_by(|(_, a), (_, b)| last.distance2(**a).total_cmp(&last.distance2(**b)))
+            .unwrap();
+        ordered.push(deduped.remove(nearest_idx));
+    }
+
+    if ordered.len() >= 2 {
+        Some(vec![ordered])
+    } else {
+        Some(Vec::new())
+    }
+}
+
 // ── Mesh-based intersection (fallback) ──────────────────────────────────────
 
 fn mesh_based_intersection(
@@ -506,10 +619,11 @@ fn mesh_based_intersection(
     face2: &Face<Point3, Curve, Surface>,
     tolerance: f64,
 ) -> Option<Vec<Vec<Point3>>> {
+    let mesh_tol = tolerance.max(0.01);
     let shell1: Shell<Point3, Curve, Surface> = vec![face1.clone()].into();
     let shell2: Shell<Point3, Curve, Surface> = vec![face2.clone()].into();
-    let poly1 = shell1.robust_triangulation(tolerance);
-    let poly2 = shell2.robust_triangulation(tolerance);
+    let poly1 = shell1.robust_triangulation(mesh_tol);
+    let poly2 = shell2.robust_triangulation(mesh_tol);
     let poly_face1 = poly1.face_iter().next()?;
     let poly_face2 = poly2.face_iter().next()?;
     let polygon1 = poly_face1.surface()?;

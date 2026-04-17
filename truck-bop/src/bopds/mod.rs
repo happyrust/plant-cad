@@ -929,7 +929,10 @@ mod tests {
             face: FaceId(3),
             vertex_ids: vec![VertexId(1), VertexId(2)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(0)),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: SectionCurveId(0),
+                    segment_index: 0,
+                },
                 uv_points: vec![
                     truck_base::cgmath64::Point2::new(0.0, 0.0),
                     truck_base::cgmath64::Point2::new(1.0, 0.0),
@@ -959,7 +962,10 @@ mod tests {
                 face: FaceId(3),
                 vertex_ids: vec![VertexId(1), VertexId(2)],
                 edges: vec![TrimmingEdge {
-                    source: TrimmingEdgeSource::SectionCurve(SectionCurveId(0)),
+                    source: TrimmingEdgeSource::SectionSegment {
+                        curve: SectionCurveId(0),
+                        segment_index: 0,
+                    },
                     uv_points: vec![
                         truck_base::cgmath64::Point2::new(0.0, 0.0),
                         truck_base::cgmath64::Point2::new(1.0, 0.0),

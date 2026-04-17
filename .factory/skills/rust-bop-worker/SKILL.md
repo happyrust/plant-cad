@@ -42,6 +42,7 @@ None.
    - run `cargo check -p truck-bop` after the implementation slice stabilizes
    - run `cargo run -p truck-bop --example bool_occt_verify` whenever the feature touches sphere-box rows, touching/tangent semantics, or box-box sentinel behavior
    - run `cargo test -p truck-bop` whenever the feature claims crate-level safety or finishes a milestone boundary
+   - if the assigned feature is explicitly repairing known baseline-red tests, you may continue after documenting the red baseline instead of treating that startup failure as a blocker
 7. Keep the mission priorities explicit:
    - first legality / closed-shell / exact solid-count
    - if strict invariant sentinels regress inside the same files you are debugging, restore those gates before continuing with downstream overlap/tangent repair
@@ -53,6 +54,7 @@ None.
    - do not weaken shell/solid gates to make a row print PASS
    - if the blocker is `TopologyInvariantBroken` in `assemble_shells` / `sew_shell_faces`, add temporary targeted instrumentation/assertions to identify the non-orientable component before attempting broader refactors
    - for overlap/adjacent shell-rebuild blockers, make that instrumentation-only checkpoint your first implementation slice before trying adjacency/grouping refactors
+   - do not use `git checkout <old-commit> -- <file>` on evolving mission files unless you have first confirmed API compatibility with the current branch and can restore the current baseline state safely
 9. In the handoff, include exact commands, exit codes, changed files, added tests/example rows, and any blockers or discovered issues.
 
 ## Example Handoff
