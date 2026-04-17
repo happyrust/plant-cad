@@ -37,6 +37,7 @@ None.
    - if the mission AGENTS file marks specific dirty `truck-bop` files as approved in-scope baseline, you may continue on top of them and commit the resulting feature work
 6. Run cargo verification in layers:
    - always run a targeted command for the feature
+   - when using `--exact` on nested Rust unit tests, use the fully qualified path (for example `trim::tests::...`) rather than a bare test name
    - run `cargo test -p truck-bop --no-run` when touching signatures, module wiring, or test layout
    - run `cargo check -p truck-bop` after the implementation slice stabilizes
    - run `cargo run -p truck-bop --example bool_occt_verify` whenever the feature touches sphere-box rows, touching/tangent semantics, or box-box sentinel behavior
