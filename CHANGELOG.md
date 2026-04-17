@@ -46,6 +46,7 @@ The version is of the bottom crate `truck-rendimpl`.
 - **fix(trim):** `canonical_edges_share_identity()` 对 `SectionSegment` 放宽为**只比较 `curve` 字段**（`segment_index` / endpoint vertex 不参与比较），允许同一 section curve 的不同 segment 视为同一身份，消除大面被同一 section curve 切开后 segment 级 component 分裂。
 - **feat(trim):** 新增 `split_faces_share_component_boundary()` 邻接判据并接入 `split_faces_share_component`：跨 `original_face` 的 `boundary_edges` 若 canonical 身份一致也视为同连通分量，修复 EE 管线分裂后 face 孤岛不能 sew 的问题。
 - **fix(api):** `remove_coplanar_duplicates()` 增加 `original_face` guard：来自同一 `original_face` 的 SplitFace（即同一原始面被 section curve 切出的不同片段）不再互相视为共面重复而被去除，避免在 section 切分后丢失合法片段。
+- **fix(api):** `remove_coplanar_duplicates()` 增加 representative_point 距离 guard：共面判断通过后还需两 SplitFace 的 `representative_point` 距离小于 `max(1e3 * tolerance, 1e-3)` 才视为重复。修复 adjacent-box 场景下 A 的 `x=0/z=0` 面（y∈[0,3]）与 B 的 `x=0/z=0` 面（y∈[3,4]）**共面但仅沿 y=3 接壤不体重叠** 被误删导致的 shell `Irregular`（从 10 面推进到 12 面；剩余 orientation conflict 需 vertex ID 统一完成后才能根治）。
 - **fix(fclass2d):** `adjust_to_range()` 周期调整改用硬边界 `v < lo` / `v > hi`，移除原 `0.5 * period` 松弛窗口，修复 u 周期 seam 上的点（例如 `u=1.0` / `u=2.0`）被错误归为 Inside 而非 OnBoundary；新增 `periodic_seam_boundary_is_on_boundary` 回归测试。
 - **feat(intersect):** 新增 `try_analytical_plane_revoluted()` 平面-旋转面解析求交快路径：UV 32×32 网格按平面方程符号变号定位交叉点，容差过滤后作为 plane-revoluted 共线交点序列返回，替代部分 mesh-based 回退。
 - **fix(api):** `run_boolean_pipeline_inner()` 在 `Cut` 且 `ds.split_faces` 全部 OnBoundary 时直接返回**空 BooleanResult**（`a − a = ∅`），不再走 Fuse/Common 同款 passthrough 分支；新增 `boundary_only_cut_returns_empty_result` 回归测试锁死行为。
