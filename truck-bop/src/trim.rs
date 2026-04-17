@@ -298,6 +298,7 @@ where
         + SearchNearestParameter<D2, Point = Point3>,
     truck_modeling::Line<Point3>: truck_modeling::ToSameGeometry<C>,
 {
+    let trace = shell_debug_enabled();
     let mut prov = crate::provenance::ProvenanceMap::default();
     prov.merged_vertices = merged_map.clone();
 
@@ -343,27 +344,43 @@ where
     bopds.boundary_edge_registry = registry;
 
     let raw_shells: Vec<Vec<Face<Point3, C, S>>> = if force_rebuild {
-        group_faces_by_shared_vertices(rebuilt_faces)
+        sew_shell_faces(split_faces, rebuilt_faces)?
     } else {
         sew_shell_faces(split_faces, rebuilt_faces)?
     };
+    if trace {
+        let shell_sizes: Vec<_> = raw_shells.iter().map(Vec::len).collect();
+        eprintln!(
+            "[truck-bop][assemble_shells] force_rebuild={force_rebuild} shell_sizes={shell_sizes:?}"
+        );
+    }
 
     let mut shells = Vec::new();
     for shell_faces in raw_shells {
         let shell: truck_topology::Shell<Point3, C, S> = shell_faces.into_iter().collect();
         let condition = shell.shell_condition();
-        match condition {
-            ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {}
-            _ => return Err(BopError::TopologyInvariantBroken),
+        if trace {
+            eprintln!(
+                "[truck-bop][assemble_shells] shell_condition={condition:?} face_count={}",
+                shell.len()
+            );
         }
-        if condition == ShellCondition::Closed {
-            validate_shell_orientation(&shell)?;
+        match condition {
+            ShellCondition::Closed => validate_shell_orientation(&shell)?,
+            _ => return Err(BopError::TopologyInvariantBroken),
         }
         shells.push(shell);
     }
     Ok((shells, prov))
 }
 
+fn shell_debug_enabled() -> bool {
+    std::env::var("TRUCK_BOP_SHELL_DEBUG")
+        .map(|value| value != "0")
+        .unwrap_or(false)
+}
+
+#[allow(dead_code)]
 fn group_faces_by_shared_vertices<C, S>(
     faces: Vec<Face<Point3, C, S>>,
 ) -> Vec<Vec<Face<Point3, C, S>>>
@@ -434,9 +451,18 @@ where
 {
     let component_groups = shell_component_groups(split_faces, &rebuilt_faces);
     let orientation_neighbors = shell_orientation_adjacency(split_faces, &rebuilt_faces);
+    let trace = shell_debug_enabled();
+    if trace {
+        eprintln!(
+            "[truck-bop][sew_shell_faces] component_groups={component_groups:?} orientation_neighbors={orientation_neighbors:?}"
+        );
+    }
     let mut shells = Vec::new();
 
     for component in component_groups {
+        if trace {
+            eprintln!("[truck-bop][sew_shell_faces] start_component={component:?}");
+        }
         let mut remaining = component;
         let mut shell_faces = Vec::new();
 
@@ -471,6 +497,11 @@ where
                         remaining.swap_remove(index);
                         advanced = true;
                     } else {
+                        if trace {
+                            eprintln!(
+                                "[truck-bop][sew_shell_faces] orientation_conflict candidate={split_face_index} against={oriented_indices:?}"
+                            );
+                        }
                         index += 1;
                     }
                 }
@@ -579,7 +610,9 @@ fn split_faces_share_component(
     rhs_topology: &RebuiltFaceTopology,
 ) -> bool {
     split_faces_share_orientable_edge(lhs, rhs, lhs_topology, rhs_topology)
+        || split_faces_share_component_boundary(lhs, rhs, lhs_topology, rhs_topology)
         || split_faces_share_vertex(lhs, rhs)
+        || split_faces_share_original_edge(lhs_topology, rhs_topology)
 }
 
 fn split_faces_share_orientable_edge(
@@ -599,11 +632,34 @@ fn split_faces_share_orientable_edge(
     })
 }
 
+fn split_faces_share_component_boundary(
+    lhs: &SplitFace,
+    rhs: &SplitFace,
+    lhs_topology: &RebuiltFaceTopology,
+    rhs_topology: &RebuiltFaceTopology,
+) -> bool {
+    if lhs.original_face == rhs.original_face {
+        return false;
+    }
+
+    lhs_topology.boundary_edges.iter().any(|lhs_edge| {
+        rhs_topology.boundary_edges.iter().any(|rhs_edge| {
+            canonical_edges_share_identity(lhs_edge, rhs_edge)
+        })
+    })
+}
+
 fn canonical_edges_share_identity(
     lhs: &CanonicalRebuiltEdge,
     rhs: &CanonicalRebuiltEdge,
 ) -> bool {
-    lhs == rhs
+    match (lhs, rhs) {
+        (
+            CanonicalRebuiltEdge::SectionSegment(lhs_curve, _, _),
+            CanonicalRebuiltEdge::SectionSegment(rhs_curve, _, _),
+        ) => lhs_curve == rhs_curve,
+        _ => lhs == rhs,
+    }
 }
 
 fn split_faces_share_vertex(lhs: &SplitFace, rhs: &SplitFace) -> bool {
@@ -619,6 +675,16 @@ fn split_faces_share_vertex(lhs: &SplitFace, rhs: &SplitFace) -> bool {
                 .iter()
                 .any(|vertex| rhs_vertices.contains(vertex))
         })
+    })
+}
+
+fn split_faces_share_original_edge(
+    lhs_topology: &RebuiltFaceTopology,
+    rhs_topology: &RebuiltFaceTopology,
+) -> bool {
+    lhs_topology.shared_edges.iter().any(|lhs_edge| {
+        matches!(lhs_edge, CanonicalRebuiltEdge::OriginalEdge(_))
+            && rhs_topology.shared_edges.iter().any(|rhs_edge| lhs_edge == rhs_edge)
     })
 }
 
@@ -671,12 +737,15 @@ fn canonical_rebuilt_edge(
             CanonicalRebuiltEdge::OriginalEdge(edge_id)
         }
         TrimmingEdgeSource::Unattributed => {
-            CanonicalRebuiltEdge::OpenBoundary(face, undirected.0, undirected.1)
+            if edge_is_shared_non_section(edge, start, end) {
+                CanonicalRebuiltEdge::SharedBoundary(undirected.0, undirected.1)
+            } else {
+                CanonicalRebuiltEdge::OpenBoundary(face, undirected.0, undirected.1)
+            }
         }
     }
 }
 
-#[allow(dead_code)]
 fn edge_is_shared_non_section(edge: &TrimmingEdge, start: VertexId, end: VertexId) -> bool {
     if edge.uv_points.len() <= 2 {
         return false;
@@ -1220,9 +1289,8 @@ where
     let mut valid_shells = Vec::new();
     for shell in shells {
         let condition = shell.shell_condition();
-        match condition {
-            ShellCondition::Closed | ShellCondition::Regular | ShellCondition::Oriented => {}
-            _ => return Err(BopError::TopologyInvariantBroken),
+        if condition != ShellCondition::Closed {
+            return Err(BopError::TopologyInvariantBroken);
         }
         valid_shells.push(shell);
     }
@@ -1553,6 +1621,7 @@ where
         .map(rebuilt_face_topology)
         .collect::<Vec<_>>();
     let mut adjacency = vec![Vec::new(); split_faces.len()];
+    let trace = shell_debug_enabled();
 
     for left in 0..split_faces.len() {
         for right in (left + 1)..split_faces.len() {
@@ -1563,6 +1632,17 @@ where
                 &topologies[right],
             );
             let actual = faces_share_topology_edge(&rebuilt_faces[left], &rebuilt_faces[right]);
+            if trace {
+                eprintln!(
+                    "[truck-bop][shell_face_adjacency] pair {left}/{right}: topo={topological} actual={actual} left_face={:?} right_face={:?} left_shared={:?} right_shared={:?} left_boundary={:?} right_boundary={:?}",
+                    split_faces[left].original_face,
+                    split_faces[right].original_face,
+                    topologies[left].shared_edges,
+                    topologies[right].shared_edges,
+                    topologies[left].boundary_edges,
+                    topologies[right].boundary_edges,
+                );
+            }
             if topological || actual {
                 adjacency[left].push(right);
                 adjacency[right].push(left);
@@ -1593,14 +1673,23 @@ where
     C: Clone,
     S: Clone,
 {
+    let trace = shell_debug_enabled();
     for existing in shell_faces {
         if let Some(should_invert) = shared_edge_orientation(existing, candidate) {
+            if trace {
+                eprintln!(
+                    "[truck-bop][orient_face_against_shell] matched shared edge should_invert={should_invert}"
+                );
+            }
             return Some(if should_invert {
                 candidate.inverse()
             } else {
                 candidate.clone()
             });
         }
+    }
+    if trace {
+        eprintln!("[truck-bop][orient_face_against_shell] no_shared_edge_match");
     }
     None
 }
@@ -2639,8 +2728,11 @@ mod tests {
 
         let mut registry = crate::bopds::SourceBoundaryEdgeRegistry::default();
         let mut vtx_counter = 1_000_000u32;
-        let left_loops = boundary_loops(FaceId(0), &left_face, 1.0e-9, &mut registry, &mut vtx_counter);
-        let right_loops = boundary_loops(FaceId(1), &right_face, 1.0e-9, &mut registry, &mut vtx_counter);
+        let mut alloc = VertexIdAllocator::new(&mut vtx_counter);
+        let left_loops =
+            boundary_loops(FaceId(0), &left_face, 1.0e-9, &mut registry, &mut alloc);
+        let right_loops =
+            boundary_loops(FaceId(1), &right_face, 1.0e-9, &mut registry, &mut alloc);
 
         assert_eq!(left_loops.len(), 1);
         assert_eq!(right_loops.len(), 1);
@@ -2797,7 +2889,13 @@ mod tests {
         reverse_trimming_loop(&mut loop_record, true);
 
         assert_eq!(loop_record.uv_points.first(), loop_record.uv_points.last());
-        assert_eq!(loop_record.edges[0].source, TrimmingEdgeSource::SectionCurve(SectionCurveId(4)));
+        assert_eq!(
+            loop_record.edges[0].source,
+            TrimmingEdgeSource::SectionSegment {
+                curve: SectionCurveId(4),
+                segment_index: 0,
+            }
+        );
         assert_eq!(
             loop_record.edges[0].uv_points,
             vec![Point2::new(0.0, 0.0), Point2::new(0.0, 1.0)]
@@ -3056,7 +3154,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(0), VertexId(1), VertexId(2), VertexId(3)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(first_section),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: first_section,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
             }],
             uv_points: vec![
@@ -3073,7 +3174,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(4), VertexId(5), VertexId(6), VertexId(7)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(second_section),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: second_section,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(2.0, 0.0), Point2::new(3.0, 0.0)],
             }],
             uv_points: vec![
@@ -3090,7 +3194,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(8), VertexId(9), VertexId(10), VertexId(11)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(99)),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: SectionCurveId(99),
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
             }],
             uv_points: vec![
@@ -3127,7 +3234,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(12), VertexId(13), VertexId(14), VertexId(15)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(outer_a),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: outer_a,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(4.0, 0.0)],
             }],
             uv_points: vec![
@@ -3144,7 +3254,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(16), VertexId(17), VertexId(18), VertexId(19)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(outer_b),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: outer_b,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(5.0, 0.0), Point2::new(7.0, 0.0)],
             }],
             uv_points: vec![
@@ -3161,7 +3274,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(20), VertexId(21), VertexId(22), VertexId(23)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(hole),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: hole,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(1.0, 1.0), Point2::new(2.0, 1.0)],
             }],
             uv_points: vec![
@@ -3194,7 +3310,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(24), VertexId(25), VertexId(26), VertexId(27)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(outer),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: outer,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(0.0, 0.0), Point2::new(6.0, 0.0)],
             }],
             uv_points: vec![
@@ -3211,7 +3330,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(28), VertexId(29), VertexId(30), VertexId(31)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(nested_outer),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: nested_outer,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(1.0, 1.0), Point2::new(5.0, 1.0)],
             }],
             uv_points: vec![
@@ -3228,7 +3350,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(32), VertexId(33), VertexId(34), VertexId(35)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(hole),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: hole,
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(2.0, 2.0), Point2::new(3.0, 2.0)],
             }],
             uv_points: vec![
@@ -3260,7 +3385,10 @@ mod tests {
             face: FaceId(0),
             vertex_ids: vec![VertexId(40), VertexId(41), VertexId(42), VertexId(43)],
             edges: vec![TrimmingEdge {
-                source: TrimmingEdgeSource::SectionCurve(SectionCurveId(7)),
+                source: TrimmingEdgeSource::SectionSegment {
+                    curve: SectionCurveId(7),
+                    segment_index: 0,
+                },
                 uv_points: vec![Point2::new(0.25, 0.25), Point2::new(0.75, 0.25)],
             }],
             uv_points: vec![
@@ -5190,7 +5318,10 @@ mod tests {
     ) -> TrimmingEdge {
         TrimmingEdge {
             source: match section_curve {
-                Some(sc) => TrimmingEdgeSource::SectionCurve(sc),
+                Some(sc) => TrimmingEdgeSource::SectionSegment {
+                    curve: sc,
+                    segment_index: 0,
+                },
                 None => TrimmingEdgeSource::Unattributed,
             },
             uv_points: vec![start, end],
@@ -5208,9 +5339,10 @@ mod tests {
 
     fn test_loop(face: FaceId, seed: u32, uv_points: Vec<Point2>, is_outer: bool) -> TrimmingLoop {
         let mut counter = face.0 * 10_000 + seed * 100;
+        let mut alloc = VertexIdAllocator::new(&mut counter);
         TrimmingLoop {
             face,
-            vertex_ids: vertex_ids_for_polyline(&mut counter, &uv_points),
+            vertex_ids: vertex_ids_for_polyline(&mut alloc, &uv_points),
             edges: vec![],
             uv_points,
             signed_area: if is_outer { -1.0 } else { 1.0 },
@@ -5226,6 +5358,7 @@ mod tests {
     fn split_faces_for_source_faces(faces: &[Face<Point3, Curve, Surface>]) -> Vec<SplitFace> {
         let mut registry = crate::bopds::SourceBoundaryEdgeRegistry::default();
         let mut vtx_counter = 1_000_000u32;
+        let mut alloc = VertexIdAllocator::new(&mut vtx_counter);
         faces
             .iter()
             .enumerate()
@@ -5237,7 +5370,7 @@ mod tests {
                     face,
                     1.0e-9,
                     &mut registry,
-                    &mut vtx_counter,
+                    &mut alloc,
                 ),
                 splitting_edges: vec![],
                 representative_point: None,

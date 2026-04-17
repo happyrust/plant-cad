@@ -324,6 +324,9 @@ fn remove_coplanar_duplicates(
             if dist > tolerance {
                 continue;
             }
+            if selected[i].original_face == selected[j].original_face {
+                continue;
+            }
             if selected[j].operand_rank > selected[i].operand_rank {
                 to_remove[j] = true;
             } else {

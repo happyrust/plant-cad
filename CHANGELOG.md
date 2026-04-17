@@ -41,11 +41,11 @@ The version is of the bottom crate `truck-rendimpl`.
 - **feat(intersect):** 新增 `coplanar_face_overlap_curves()` 共面面重叠区域边界检测算法（未启用，Issue #7 待完善集成）。
 - **fix(api):** passthrough 路径的 edge provenance 补全：使用真实 `TrimmingEdge` 来源（`OriginalBoundaryEdge` / `SectionSegment`），不再使用合成 ID。
 - **fix(trim):** `build_trimming_loops()` 容差不再混合 `parametric_tol.max(geometric_tol)`，统一使用 `geometric_tol`，避免 UV/3D 空间容差混淆。
-- **feat(trim):** 新增 `group_faces_by_shared_vertices()` 基于 Vertex ID 的 union-find 连通分量分组（为 force_rebuild 多 shell 预留）。
-- **refactor(trim):** `force_rebuild` 路径统一走 `sew_shell_faces`，移除 `group_faces_by_shared_vertices()` 这种 shared-vertex 启发式分组；shell 条件收紧为**仅接受 `Closed`**，并对所有 Closed shell 强制 `validate_shell_orientation`，消除 Regular/Oriented 兜底带来的不变量漂移。
-- **feat(trim):** 新增 `CanonicalRebuiltEdge::SharedBoundary(v1,v2)` 身份变体：当一条边非 section curve 且被多个 face 共享时，取代 `OpenBoundary(face,…)`，让跨 face 的缝合边在 canonical 比较中自然等价。
-- **fix(trim):** `canonical_edges_share_identity()` 对 `SectionSegment` 特化为只比较 `curve` id（忽略 `segment_index`），允许同一 section curve 的不同 segment 视为同一身份，修复大面被 section curve 切开后 segment 级 component 分裂的 bug。
-- **feat(trim):** 新增 `split_faces_share_component_boundary()` 邻接判定：除了 `share_orientable_edge` 与 `share_vertex` 外，跨 `original_face` 的边界边若 canonical 身份一致也视为同连通分量，修复 EE 管线分裂后的 face 孤岛。
+- **chore(trim):** `group_faces_by_shared_vertices()` 标注 `#[allow(dead_code)]`（目前仍是 force_rebuild 多 shell 预留 API，无 caller），修复 release 模式下 `deny(dead_code)` 编译失败。
+- **feat(trim):** `CanonicalRebuiltEdge::SharedBoundary(v1,v2)` 变体正式产出：`canonical_rebuilt_edge()` 对 `Unattributed` 源的边先用 `edge_is_shared_non_section` 判定，满足条件（多点折返或首尾重合）时作为 `SharedBoundary` 推入 `shared_edges`，其余仍是 `OpenBoundary`，让跨 face 的缝合 trim 边在 canonical 比较中自然等价。
+- **fix(trim):** `canonical_edges_share_identity()` 对 `SectionSegment` 放宽为**只比较 `curve` 字段**（`segment_index` / endpoint vertex 不参与比较），允许同一 section curve 的不同 segment 视为同一身份，消除大面被同一 section curve 切开后 segment 级 component 分裂。
+- **feat(trim):** 新增 `split_faces_share_component_boundary()` 邻接判据并接入 `split_faces_share_component`：跨 `original_face` 的 `boundary_edges` 若 canonical 身份一致也视为同连通分量，修复 EE 管线分裂后 face 孤岛不能 sew 的问题。
+- **fix(api):** `remove_coplanar_duplicates()` 增加 `original_face` guard：来自同一 `original_face` 的 SplitFace（即同一原始面被 section curve 切出的不同片段）不再互相视为共面重复而被去除，避免在 section 切分后丢失合法片段。
 - **fix(fclass2d):** `adjust_to_range()` 周期调整改用硬边界 `v < lo` / `v > hi`，移除原 `0.5 * period` 松弛窗口，修复 u 周期 seam 上的点（例如 `u=1.0` / `u=2.0`）被错误归为 Inside 而非 OnBoundary；新增 `periodic_seam_boundary_is_on_boundary` 回归测试。
 - **feat(intersect):** 新增 `try_analytical_plane_revoluted()` 平面-旋转面解析求交快路径：UV 32×32 网格按平面方程符号变号定位交叉点，容差过滤后作为 plane-revoluted 共线交点序列返回，替代部分 mesh-based 回退。
 - **fix(api):** `run_boolean_pipeline_inner()` 在 `Cut` 且 `ds.split_faces` 全部 OnBoundary 时直接返回**空 BooleanResult**（`a − a = ∅`），不再走 Fuse/Common 同款 passthrough 分支；新增 `boundary_only_cut_returns_empty_result` 回归测试锁死行为。
