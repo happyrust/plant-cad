@@ -52,32 +52,20 @@ fn main() {
     }
 }
 
-fn step_to_mesh<'a>(table: &Table) -> Vec<MeshedCShell> {
+fn step_to_mesh(table: &Table) -> Vec<MeshedCShell> {
     let assy = table.step_assy().unwrap();
 
-    let node_map = |ProductEntity {
-                        shape: indices,
-                        attrs: name,
-                    }: &ProductEntity| {
-        let shape = indices
+    let node_map = |ProductEntity { shape, attrs }: &ProductEntity| {
+        let shape = shape
             .iter()
-            .filter_map(|idx| {
-                let shells = if let Some(step_solid) = table.manifold_solid_brep.get(idx) {
-                    table
-                        .to_compressed_solid(step_solid)
-                        .map_err(|err| eprintln!("failed to convert solid: {err}"))
-                        .ok()?
-                        .boundaries
-                } else if let Some(step_shells) = table.shell_based_surface_model.get(idx) {
-                    table
-                        .to_compressed_shells(step_shells)
-                        .map_err(|err| eprintln!("failed to convert shells: {err}"))
-                        .ok()?
-                } else {
-                    return None;
+            .filter_map(|shape| {
+                let shells = match shape {
+                    ProductShape::Solid(solid) => &solid.boundaries,
+                    ProductShape::Shells(shells) => shells,
+                    _ => return None,
                 };
                 let meshed_shells = shells
-                    .into_iter()
+                    .iter()
                     .map(|shell| {
                         let pre = shell.robust_triangulation(0.01).to_polygon();
                         let bdd = pre.bounding_box();
@@ -89,7 +77,7 @@ fn step_to_mesh<'a>(table: &Table) -> Vec<MeshedCShell> {
             .collect::<Vec<_>>();
         NodeEntity {
             shape,
-            attrs: name.clone(),
+            attrs: attrs.clone(),
         }
     };
     let edge_map = |EdgeEntity { matrix: trans, .. }: &AssembleEntity| EdgeEntity {
@@ -101,7 +89,6 @@ fn step_to_mesh<'a>(table: &Table) -> Vec<MeshedCShell> {
 
     meshed_assy
         .top_nodes()
-        .into_iter()
         .flat_map(|top| meshed_assy.paths_iter(top.index()))
         .flat_map(|path| {
             let matrix = path.matrix();
@@ -114,9 +101,9 @@ fn step_to_mesh<'a>(table: &Table) -> Vec<MeshedCShell> {
                     edge.curve.transform_by(matrix);
                 });
                 shell.faces.iter_mut().for_each(|face| {
-                    face.surface
-                        .as_mut()
-                        .map(|surface| surface.transform_by(matrix));
+                    if let Some(surface) = face.surface.as_mut() {
+                        surface.transform_by(matrix);
+                    }
                 });
                 shell
             })

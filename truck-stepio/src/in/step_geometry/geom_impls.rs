@@ -1,5 +1,20 @@
 use super::*;
 
+impl ToSameGeometry<Curve2D> for Line<Point2> {
+    #[inline]
+    fn to_same_geometry(&self) -> Curve2D { Curve2D::Line(*self) }
+}
+
+impl ToSameGeometry<Curve2D> for Processor<TrimmedCurve<UnitCircle<Point2>>, Matrix3> {
+    #[inline]
+    fn to_same_geometry(&self) -> Curve2D { Curve2D::Conic(Conic2D::Ellipse(*self)) }
+}
+
+impl ToSameGeometry<Curve2D> for BSplineCurve<Point2> {
+    #[inline]
+    fn to_same_geometry(&self) -> Curve2D { Curve2D::BSplineCurve(self.clone()) }
+}
+
 impl ToSameGeometry<Curve3D> for Line<Point3> {
     #[inline]
     fn to_same_geometry(&self) -> Curve3D { Curve3D::Line(*self) }
@@ -67,8 +82,7 @@ impl ToSameGeometry<Surface> for RevolutedCurve<Curve3D> {
     fn to_same_geometry(&self) -> Surface {
         let default = || {
             let (curve, origin, axis) = (self.entity_curve().inverse(), self.origin(), self.axis());
-            let mut processor = Processor::new(RevolutedCurve::by_revolution(curve, origin, axis));
-            processor.invert();
+            let processor = Processor::new(RevolutedCurve::by_revolution(curve, origin, axis));
             Surface::SweptCurve(SweptCurve::RevolutedCurve(processor))
         };
         match self.entity_curve() {
@@ -78,11 +92,9 @@ impl ToSameGeometry<Surface> for RevolutedCurve<Curve3D> {
                 let axis = self.axis();
                 if v.cross(axis).so_small() {
                     let o = self.origin();
-                    let origin = o + (q - o).dot(axis) * axis;
-                    let line = Line(q, q - v.normalize());
-                    let revo = RevolutedCurve::by_revolution(line, origin, axis);
-                    let mut processor = Processor::new(revo);
-                    processor.invert();
+                    let origin = o + (p - o).dot(axis) * axis;
+                    let revo = RevolutedCurve::by_revolution(*line, origin, axis);
+                    let processor = Processor::new(revo);
                     Surface::ElementarySurface(ElementarySurface::CylindricalSurface(processor))
                 } else {
                     default()

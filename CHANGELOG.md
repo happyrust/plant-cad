@@ -5,6 +5,15 @@ The version is of the bottom crate `truck-rendimpl`.
 ## Unreleased
 
 - Materialize split-edge records from final pave blocks, preserve stable linkage, and report real split-edge counts through the BOP pipeline.
+- Implement `ToSameGeometry` for STEP 2D geometries.
+- Create 2D-handling crate `truck-drafting`.
+- Fix implementation of `ToSameGeometry<Surface>` for `RevolutedCurve<Curve3D>`. 
+- Add tangent-based constraint support to circular arc construction in `truck-modeling`
+- Added `BasisWindow` to simplify and centralize basis-function range handling.
+- Fix non intersect bboxes has invalid intersects.
+- Fix syntax error when reading binary STL > 8192b.
+- Fillet for a single edge.
+- Write assembly to step file.
 - In the README, we clarified that the subtitle is the origin of the name “truck,” and changed all instances of the term in the main text to `truck`.
 - Get more precise part attributions from `Product` and `NextAssemblyUsageOccurrence`.
 - Add the variable `division` to `truck_modeling::builder::rsweep`.
@@ -63,7 +72,7 @@ The version is of the bottom crate `truck-rendimpl`.
 
 ### Latest `cargo upgrade`
 
-2026-03-13
+2026-04-20
 
 ## v0.6
 
